@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Локальный pre-commit: быстрая проверка перед коммитом.
+# Активируется: git config core.hooksPath .githooks
+
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+echo "▶ pre-commit: swift build"
+swift build
+
+if command -v swiftlint >/dev/null 2>&1; then
+    echo "▶ pre-commit: swiftlint"
+    swiftlint --quiet --strict
+else
+    echo "⚠ swiftlint не установлен — пропускаю (brew install swiftlint)"
+fi
+
+echo "▶ pre-commit: smoke"
+./Scripts/smoke.sh >/dev/null
+
+echo "✅ pre-commit OK"

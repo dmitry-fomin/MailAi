@@ -17,4 +17,7 @@ echo "▶ run Core smoke"
 echo "▶ run MockData smoke"
 (cd Packages/MockData && swift run MockDataSmoke)
 
+echo "▶ run AppShell smoke"
+(cd Packages/AppShell && swift run AppShellSmoke)
+
 echo "✅ all smoke checks passed"

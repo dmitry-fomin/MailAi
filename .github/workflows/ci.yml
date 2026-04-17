@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main, feature/**]
+  pull_request:
+    branches: [main]
+
+jobs:
+  spm-build-smoke:
+    name: SPM build + smoke
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Build all packages (root)
+        run: swift build
+
+      - name: Smoke tests
+        run: ./Scripts/smoke.sh
+
+      - name: Per-package XCTest
+        run: |
+          for pkg in Core Secrets Storage MailTransport AI UI MockData AppShell; do
+            echo "=== $pkg ==="
+            (cd Packages/$pkg && swift test)
+          done
+
+  swiftlint:
+    name: SwiftLint
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SwiftLint
+        run: brew install swiftlint
+      - name: Run SwiftLint
+        run: swiftlint --strict
+
+  xcode-build:
+    name: Xcode build + test
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+      - name: Install xcodegen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Build
+        run: xcodebuild -scheme MailAi -destination 'platform=macOS' -configuration Debug build | xcbeautify
+      - name: Test
+        run: xcodebuild -scheme MailAi -destination 'platform=macOS' test | xcbeautify
