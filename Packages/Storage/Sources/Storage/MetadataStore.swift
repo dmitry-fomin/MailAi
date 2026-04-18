@@ -8,6 +8,10 @@ public protocol MetadataStore: Sendable {
     func upsert(_ messages: [Message]) async throws
     func messages(in mailbox: Mailbox.ID, page: Page) async throws -> [Message]
     func delete(messageIDs: [Message.ID]) async throws
+    /// Вернёт единичный `Message` по id, если он есть в store. Нужен
+    /// Live-провайдеру, чтобы при запросе `body(for:)` найти `UID`+`Mailbox.ID`
+    /// без повторного полного скана.
+    func message(id: Message.ID) async throws -> Message?
 }
 
 public actor InMemoryMetadataStore: MetadataStore {
@@ -35,5 +39,12 @@ public actor InMemoryMetadataStore: MetadataStore {
             for id in messageIDs { mutable.removeValue(forKey: id) }
             byMailbox[mailbox] = mutable
         }
+    }
+
+    public func message(id: Message.ID) async throws -> Message? {
+        for dict in byMailbox.values {
+            if let found = dict[id] { return found }
+        }
+        return nil
     }
 }

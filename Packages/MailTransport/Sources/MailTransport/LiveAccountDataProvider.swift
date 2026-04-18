@@ -176,8 +176,30 @@ public final class LiveAccountDataProvider: AccountDataProvider, @unchecked Send
     }
 
     public func body(for message: Message.ID) -> AsyncThrowingStream<ByteChunk, any Error> {
-        AsyncThrowingStream { continuation in
-            continuation.finish(throwing: MailError.unsupported("body — TODO фаза B7"))
+        let store = self.store
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    guard let record = try await store.message(id: message) else {
+                        throw MailError.messageNotFound(message)
+                    }
+                    try await withSession { conn in
+                        // SELECT нужной папки (IMAP требует активный mailbox
+                        // перед UID FETCH).
+                        _ = try await conn.select(record.mailboxID.rawValue)
+                        for try await chunk in conn.streamBody(uid: record.uid) {
+                            if Task.isCancelled { return }
+                            continuation.yield(chunk)
+                        }
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
