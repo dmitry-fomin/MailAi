@@ -1,6 +1,6 @@
 # Модуль: Secrets
 
-<!-- Статус: план модуля. Код ещё не написан. -->
+<!-- Статус: KeychainService + SecretsStore (Kind.imapPassword, Kind.openrouter) реализованы; InMemorySecretsStore для тестов. -->
 
 ## Назначение
 

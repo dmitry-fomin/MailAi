@@ -1,106 +1,71 @@
 # MailAi — текущее состояние проекта
 
-Дата среза: 2026-04-18. Ветка: `main`.
+Дата среза: 2026-04-18. Ветка: `master` (main-ветка не используется; PR делаются напрямую в master).
 
-## Что сделано (мерджнуто в main)
+## Что сделано (на master)
 
 ### Каркас и инфраструктура
-- Монорепа на SwiftPM: 8 локальных пакетов в `Packages/`.
+- Монорепа на SwiftPM: локальные пакеты в `Packages/` (Core, Secrets, Storage, MailTransport, AI, MockData, UI, AppShell).
 - Xcode app target `MailAi/` (SwiftUI entry), генерится через `xcodegen` из `project.yml`.
 - macOS 14+, Swift 6, strict concurrency complete, warnings-as-errors.
 - Smoke-тесты: executable-таргеты `*Smoke` + `Scripts/smoke.sh` (CLT-only окружение, XCTest гейтится `#if canImport(XCTest)`).
 - CI: `.github/workflows/ci.yml`.
 - Beads (`bd`) для трекинга задач, Dolt-хранилище в `.beads/`.
 
-### Модули (на main)
+### Модули (на master)
 
-| Модуль | Что есть |
+| Модуль | Состав |
 |---|---|
-| **Core** | Доменные модели (`Account`, `Mailbox`, `Message`, `MessageBody`, `Attachment`, `Thread`, `Importance`, `MailError`), протокол `AccountDataProvider`. |
-| **Secrets** | `SecretsStore` поверх Security.framework (Keychain). |
-| **Storage** | `MetadataStore` — заглушка интерфейса (без GRDB пока). |
-| **MailTransport** | `LiveAccountDataProvider` — заглушка для будущего IMAP. |
-| **AI** | `AIClassifier` — заглушка. |
-| **MockData** | `MockAccountDataProvider` — фейковые аккаунты/папки/письма для UI. |
-| **UI** | `UIPlaceholder` — пустой пакет под переиспользуемые компоненты. |
-| **AppShell** | `MailAiApp`, `WelcomeScene`, `AccountWindowScene`, `AccountSessionModel`, `Sidebar/*` (item/provider/view/viewmodel). |
+| **Core** | Модели (`Account`, `Mailbox`, `Message`, `MessageBody`, `Attachment`, `Thread`, `Importance`, `MailError`, `ClassificationInput/Result`, `Rule`, `AuditEntry`). Протоколы: `AccountDataProvider`, `MailActionsProvider`, `AIProvider`, `SearchService`. |
+| **Secrets** | `KeychainService` (Security.framework) + `SecretsStore` (API для пароля IMAP и ключа OpenRouter, `Kind.imapPassword`/`Kind.openrouter`), `InMemorySecretsStore` для тестов. |
+| **Storage** | `GRDBMetadataStore`, `Schema` v1/v2/**v3 (FTS5)**, `RulesRepository`, `ClassificationLog`, `RetentionGC`, `DatabasePathProvider`, `LocalSearcher` + `SearchQueryParser`, `GRDBSearchService`. |
+| **MailTransport** | `IMAPClientBootstrap`, `IMAPConnection` (LOGIN/CAPABILITY/LIST/SELECT/FETCH/STORE/COPY/MOVE/EXPUNGE), `IMAPFrameCodec`, `IMAPResponseParser` (ENVELOPE/FLAGS/UID/BODYSTRUCTURE), MIME-стриминг BODY[]. `LiveAccountDataProvider` — реальный IMAP end-to-end. |
+| **AI** | `OpenRouterClient` (URLSession streaming), `Classifier` actor + `ClassifyV1` промпт, `RuleEngine`, `SnippetExtractor`. |
+| **MockData** | `MockAccountDataProvider` для UI-разработки и демо-режима. |
+| **AppShell** | `MailAiApp`, сцены: Welcome / AccountWindow / AccountPicker / Onboarding / Settings. ViewModels: `AccountRegistry`, `AccountSessionModel` (+ `search`, `perform`), `OnboardingViewModel`, `SelectionPersistence`. `ClassificationCoordinator`, `ClassificationQueue`, `UndoStack`, Sidebar. |
 
-### UI (фазы A2 + A3)
-- Welcome-окно и окно-аккаунт (`AccountWindowScene`).
-- **Sidebar**: 4 секции — Избранное, Смарт-ящики, На моём Mac, `<account.email>`. Иконки SF Symbols, бейджи непрочитанных, выбор активной папки. `MockSidebarProvider` пока подаёт данные из `MockAccountDataProvider`.
-- 11/11 unit-тестов на `SidebarViewModel`.
+### Фазы, доведённые до master
 
-### Документация модулей
-В `docs/` уже лежат заготовки: `Core.md`, `MailTransport.md`, `Storage.md`, `AI.md`, `Secrets.md`, `AppShell.md`, `UI.md`, `Search.md`, `Attachments.md`, `Notifications.md`, `StatusBar.md`. Подпапка `docs/libs/` — по внешним библиотекам (SwiftNIO, GRDB, Keychain, OpenRouter).
+- **Каркас 0.1–0.7**, **UI A2–A10** (скриншот-тесты Light/Dark), **Transport B1–B10**, **Live 1–6** (реальный IMAP-провайдер), **Mail 1–4** (действия: delete/archive/flag/markRead + UI wiring + smoke), **Search 1–3** (FTS5 + парсер + UI-поиск), **AI 1–2** (OpenRouterClient + Classifier), **C1–C6** (merge веток, onboarding IMAP, интеграционный end-to-end + memory-инварианты, финальный прогон SPECIFICATION.md).
 
-## Что есть локально, но НЕ в main
+## Дорожная карта (19 открытых задач)
 
-### Ветка `feature/imap-transport` (готова к мерджу — задача `MailAi-j8p`)
-Содержит коммиты, которых нет в main:
-- **B1**: `KeychainService` на Security.framework + smoke-тест.
-- **WIP-коммит** `AI-pack каркас + IMAP-скелет + Storage GRDB`:
-  - **AI**: `Classifier`, `ClassifyV1`, `OpenRouterClient`, `RuleEngine`, `SnippetExtractor` + 7 тест-файлов (включая интеграционные с OpenRouter).
-  - **Storage**: `GRDBMetadataStore`, `RulesRepository`, `ClassificationLog`, `Schema`/`SchemaV2`, `RetentionGC`, `DatabasePathProvider` + тесты.
-  - **AppShell**: `ClassificationCoordinator`, `ClassificationQueue`, `UndoStack` + тесты.
-  - **MailTransport**: каркас IMAP — `IMAPClientBootstrap`, `IMAPConnection`, `IMAPFrameCodec`, `IMAPLine`, `IMAPResponse`, `IMAPTag` + loopback/TLS-тесты.
-  - **Core**: `ClassificationInput`, `ClassificationResult`, `Rule`, `AuditEntry`, `AIProvider`.
-- **B5**: `IMAPResponseParser` — парсер ENVELOPE / FLAGS / UID / BODYSTRUCTURE / INTERNALDATE / RFC822.SIZE, RFC 2047-декодер заголовков, `IMAPFetchResponse`. 30 тестов на корпусе Gmail/Yandex/Mail.ru/FastMail. Всего 57 passed / 1 skipped (live TLS) в `MailTransportTests`.
+Источник: `bd list --status=open`. Ветка `feature/imap-transport` уже слита; main-ветка упразднена.
 
-> **Внимание:** этот WIP-коммит склеил в одну точку три независимых направления (AI-pack, Storage, IMAP). Перед мерджем в main стоит распилить на отдельные коммиты или хотя бы провести явный merge-commit с описанием.
+### AI-pack v1 (продолжение AI-1/2)
+- **MailAi-8no** AI-3: `ClassificationQueue` (батчинг, ретраи, persistence в `classification_log`). *Ready.*
+- **MailAi-8te** AI-4: `RuleEngine` CRUD + сериализация в system prompt.
+- **MailAi-z96** AI-5: живые «Отфильтрованные» папки, прогресс-бар, drag-to-rule.
+- **MailAi-new** AI-6: Settings → AI-pack (ключ, модель, правила).
+- **MailAi-skb** AI-7: (опц.) серверная синхронизация «Отфильтрованных».
+- **MailAi-4zm** AI-8: Retention GC + privacy-тесты.
+
+### Пул IMAP-сессий
+- **MailAi-qrz** Pool-1: `IMAPSession` actor с command queue. *Ready.*
+- **MailAi-211** Pool-2: интеграция в `LiveAccountDataProvider`.
+- **MailAi-y23** Pool-3: IDLE-цикл для активной папки.
+- **MailAi-md4** Pool-4: smoke session pool + IDLE.
+
+### SMTP / Compose
+- **MailAi-1qb** SMTP-1: SwiftNIO-клиент (EHLO/STARTTLS/AUTH/MAIL/RCPT/DATA). *Ready.*
+- **MailAi-2u7** SMTP-2: MIME-composer (RFC 2047).
+- **MailAi-h5m** SMTP-3: `SendProvider` + `LiveSendProvider` + Keychain SMTP.
+- **MailAi-91d** SMTP-4: черновики через IMAP APPEND.
+- **MailAi-tq4** SMTP-5: `ComposeScene`.
+- **MailAi-3e0** SMTP-6: smoke SMTP + Compose end-to-end.
+
+### StatusBar / Notifications
+- **MailAi-faa** Status-1: `MenuBarExtra` со счётчиком и меню аккаунтов. *Ready.*
+- **MailAi-jgv** Status-2: `UNUserNotificationCenter` (privacy-aware).
+- **MailAi-v7r** Status-3: smoke StatusBar/Notifications.
 
 ## Как собрать/посмотреть
 
 ```bash
-# UI-просмотр
 brew install xcodegen          # один раз
 xcodegen generate              # из корня проекта
 open MailAi.xcodeproj          # схема MailAi → ⌘R
 
-# Unit-тесты пакета
 swift test --package-path Packages/AppShell
-
-# Smoke-проверка всех executable-таргетов
-Scripts/smoke.sh
+Scripts/smoke.sh               # все executable *Smoke
 ```
-
-## Дорожная карта (что дальше)
-
-Из `bd list --status=open` — 18 задач. Сгруппировано по приоритету для следующих шагов.
-
-### Ближайшее (разблокировано прямо сейчас)
-1. **MailAi-j8p — C2: merge `feature/imap-transport` → main.** Принести в main: B1 (Keychain), AI-pack, Storage (GRDB), IMAP-каркас + B5-парсер. Желательно разбить на 2-3 коммита.
-2. **MailAi-loi — A4: список писем** (`MessageRowView`, виртуализация через `LazyVStack`/`Table`).
-3. **MailAi-14v — A5: Reader** (header + body + toolbar для одного письма).
-4. **MailAi-93n — B6: FETCH headers + запись в MetadataStore.** Связывает свежий B5-парсер со Storage.
-
-### UI-фазы A
-- **A6** (`MailAi-0g9`) — клавиатурная навигация (J/K/⌘↑↓, выделение, Delete).
-- **A7** (`MailAi-p2w`) — многооконность: окно=аккаунт, picker аккаунта, запрет дублей окна.
-- **A8** (`MailAi-vuf`) — state restoration набора окон между запусками.
-- **A9** (`MailAi-3er`) — Light/Dark темы + Dynamic Type.
-- **A10** (`MailAi-1xa`) — скриншот-тесты ключевых экранов в Dark/Light.
-
-### Транспорт B (после мерджа `feature/imap-transport`)
-- **B7** (`MailAi-7xe`) — FETCH BODY[] стримом + MIME-парсер (без хранения тела на диске).
-- **B8** (`MailAi-8gg`) — IDLE + reconnect с экспоненциальным backoff.
-- **B9** (`MailAi-39g`) — CLI `IMAPSmokeCLI` для ручной проверки серверов.
-- **B10** (`MailAi-qyl`) — perf-тест: FETCH 1000 заголовков ≤ 2 с.
-
-### Интеграция и онбординг C
-- **C3** (`MailAi-f0h`) — подключить `LiveAccountDataProvider` в AppShell под feature-flag `MOCK_DATA` (сейчас всё на моках).
-- **C4** (`MailAi-f62`) — UI-онбординг: форма добавления IMAP-аккаунта (host/port/login/пароль → Keychain).
-- **C5** (`MailAi-lvi`) — end-to-end интеграционный тест + проверка профиля памяти (тела писем не оседают).
-- **C6** (`MailAi-whw`) — финальный прогон критериев приёмки `SPECIFICATION.md`.
-
-### AI-pack v1
-- **MailAi-465** — UI-каркас AI-pack в v1: пустые «AI»-папки и слоты под классификацию (после мерджа AI-pack из `feature/imap-transport`).
-
-### Что НЕ закрыто планом и стоит подумать
-- Реальный `LiveAccountDataProvider` поверх IMAP (сейчас файл-заглушка) — должен появиться во время C3.
-- Bulk-delete по AI-критерию (фича из README, отдельных задач в beads пока нет).
-- Суммаризация переписок (тоже из README, задач нет).
-- Notifications + StatusBar (документация есть в `docs/`, задач в beads — нет).
-- Search (FTS5 + серверный) — `docs/Search.md` есть, задач нет.
-- Attachments стриминг — `docs/Attachments.md` есть, задач нет.
-
-> Эти пункты — кандидаты на новые `bd create` после фаз A/B/C.

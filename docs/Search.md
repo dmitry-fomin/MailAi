@@ -1,6 +1,6 @@
 # Модуль: Search
 
-<!-- Статус: план модуля. Код ещё не написан. -->
+<!-- Статус: локальный поиск реализован (Schema v3 FTS5 + QueryParser + GRDBSearchService + UI). ServerSearcher/Coordinator — план. -->
 
 ## Назначение
 

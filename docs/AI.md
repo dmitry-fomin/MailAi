@@ -1,6 +1,6 @@
 # Модуль: AI
 
-<!-- Статус: план модуля. Код ещё не написан. -->
+<!-- Статус: OpenRouterClient + Classifier actor + промпт ClassifyV1 + RuleEngine + SnippetExtractor реализованы. Summarizer / BulkDeleteAdvisor / Usage — план. -->
 
 ## Назначение
 
