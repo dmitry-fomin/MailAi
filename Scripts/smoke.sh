@@ -29,4 +29,7 @@ echo "▶ run AppShell smoke"
 echo "▶ run MailTransport perf smoke (B10: FETCH 1000 headers ≤ 2s)"
 (cd Packages/MailTransport && swift run IMAPPerfSmoke)
 
+echo "▶ run Integration smoke (C5: end-to-end + memory inv.)"
+(cd Packages/AppShell && swift run IntegrationSmoke)
+
 echo "✅ all smoke checks passed"

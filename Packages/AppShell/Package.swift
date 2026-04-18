@@ -6,7 +6,8 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "AppShell", targets: ["AppShell"]),
-        .executable(name: "AppShellSmoke", targets: ["AppShellSmoke"])
+        .executable(name: "AppShellSmoke", targets: ["AppShellSmoke"]),
+        .executable(name: "IntegrationSmoke", targets: ["IntegrationSmoke"])
     ],
     dependencies: [
         .package(path: "../Core"),
@@ -16,7 +17,8 @@ let package = Package(
         .package(path: "../Secrets"),
         .package(path: "../MailTransport"),
         .package(path: "../AI"),
-        .package(url: "https://github.com/groue/GRDB.swift", from: "7.0.0")
+        .package(url: "https://github.com/groue/GRDB.swift", from: "7.0.0"),
+        .package(url: "https://github.com/apple/swift-nio", from: "2.65.0")
     ],
     targets: [
         .target(
@@ -32,6 +34,20 @@ let package = Package(
             name: "AppShellSmoke",
             dependencies: ["AppShell", "Core", "MockData"],
             path: "Sources/AppShellSmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
+        ),
+        .executableTarget(
+            name: "IntegrationSmoke",
+            dependencies: [
+                "AppShell", "Core", "Storage", "Secrets", "MailTransport",
+                .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio")
+            ],
+            path: "Sources/IntegrationSmoke",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableUpcomingFeature("ExistentialAny")
