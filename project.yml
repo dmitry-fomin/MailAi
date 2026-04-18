@@ -23,7 +23,7 @@ packages:
   Core:         { path: Packages/Core }
   Secrets:      { path: Packages/Secrets }
   Storage:      { path: Packages/Storage }
-  MailTransport:{ path: Packages/MailTransport }
+  MailTransport: { path: Packages/MailTransport }
   AI:           { path: Packages/AI }
   UI:           { path: Packages/UI }
   MockData:     { path: Packages/MockData }
