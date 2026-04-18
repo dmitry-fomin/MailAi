@@ -46,6 +46,21 @@ enum AppShellSmokeRunner {
         let messagesAfterClose = session.messages
         check("messages очищены после closeSession", messagesAfterClose.isEmpty)
 
+        // A7: AccountRegistry — дедупликация сессий и release.
+        let registry = await AccountRegistry(accounts: [provider.account], mode: .mock)
+        let s1 = await registry.session(for: provider.account.id)
+        let s2 = await registry.session(for: provider.account.id)
+        check("AccountRegistry переиспользует сессию для одного Account.ID",
+              s1 != nil && s1 === s2)
+
+        await registry.releaseSession(for: provider.account.id)
+        let s3 = await registry.session(for: provider.account.id)
+        check("После releaseSession реестр выдаёт новую сессию",
+              s3 != nil && s3 !== s1)
+
+        let missing = await registry.session(for: .init("unknown"))
+        check("Неизвестный Account.ID → nil", missing == nil)
+
         print("\nAll AppShell smoke checks passed.")
     }
 }
