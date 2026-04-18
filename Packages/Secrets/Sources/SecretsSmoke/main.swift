@@ -24,6 +24,13 @@ enum SecretsSmokeRunner {
         let gone = try await mem.password(forAccount: id)
         check("InMemorySecretsStore удаляет пароль", gone == nil)
 
+        try await mem.setOpenRouterKey("or-key", forAccount: id)
+        let orRead = try await mem.openRouterKey(forAccount: id)
+        check("InMemorySecretsStore читает OpenRouter-ключ", orRead == "or-key")
+        try await mem.deleteOpenRouterKey(forAccount: id)
+        let orGone = try await mem.openRouterKey(forAccount: id)
+        check("InMemorySecretsStore удаляет OpenRouter-ключ", orGone == nil)
+
         // KeychainService — реальный Keychain. На headless CI может упасть
         // из-за отсутствия login keychain; под локальным юзером должен работать.
         let key = KeychainService(servicePrefix: "mailai-smoke")

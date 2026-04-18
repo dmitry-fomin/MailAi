@@ -15,6 +15,7 @@ public actor KeychainService: SecretsStore {
     public enum Kind: String, Sendable {
         case password
         case oauthRefreshToken
+        case openrouter
     }
 
     private let servicePrefix: String
@@ -38,6 +39,18 @@ public actor KeychainService: SecretsStore {
 
     public func deletePassword(forAccount accountID: Account.ID) async throws {
         try await delete(kind: .password, forAccount: accountID)
+    }
+
+    public func setOpenRouterKey(_ key: String, forAccount accountID: Account.ID) async throws {
+        try await set(value: key, kind: .openrouter, forAccount: accountID)
+    }
+
+    public func openRouterKey(forAccount accountID: Account.ID) async throws -> String? {
+        try await value(kind: .openrouter, forAccount: accountID)
+    }
+
+    public func deleteOpenRouterKey(forAccount accountID: Account.ID) async throws {
+        try await delete(kind: .openrouter, forAccount: accountID)
     }
 
     // MARK: - Generic kind-aware API
