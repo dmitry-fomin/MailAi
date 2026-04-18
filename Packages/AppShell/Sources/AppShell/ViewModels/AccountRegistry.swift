@@ -71,10 +71,15 @@ public final class AccountRegistry: ObservableObject {
             secrets: secrets,
             store: store
         )
+        // Search-2: поисковый сервис на том же GRDB-pool.
+        let search: (any SearchService)? = (store as? GRDBMetadataStore).map {
+            GRDBSearchService(pool: $0.pool)
+        }
         let session = AccountSessionModel(
             account: account,
             provider: provider,
-            selectionPersistence: selectionPersistence
+            selectionPersistence: selectionPersistence,
+            searchService: search
         )
         sessions[id] = session
         return session

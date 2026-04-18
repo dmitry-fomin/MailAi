@@ -9,6 +9,7 @@ public final class AccountSessionModel: ObservableObject {
     public let account: Account
     public let provider: any AccountDataProvider
     public let selectionPersistence: any SelectionPersistence
+    public let searchService: (any SearchService)?
 
     @Published public private(set) var mailboxes: [Mailbox] = []
     @Published public var selectedMailboxID: Mailbox.ID? {
@@ -26,17 +27,31 @@ public final class AccountSessionModel: ObservableObject {
     @Published public private(set) var isLoadingMessages: Bool = false
     @Published public private(set) var lastError: MailError?
 
+    /// Строка в поисковом поле окна. Пустая строка — обычный режим
+    /// (listMode == .mailbox). Непустая — подтягивается searchResults.
+    @Published public var searchQuery: String = "" {
+        didSet {
+            guard oldValue != searchQuery else { return }
+            performSearch()
+        }
+    }
+    @Published public private(set) var searchResults: [Message] = []
+    @Published public private(set) var isSearching: Bool = false
+
     private var messagesTask: Task<Void, Never>?
     private var bodyTask: Task<Void, Never>?
+    private var searchTask: Task<Void, Never>?
 
     public init(
         account: Account,
         provider: any AccountDataProvider,
-        selectionPersistence: any SelectionPersistence = InMemorySelectionPersistence()
+        selectionPersistence: any SelectionPersistence = InMemorySelectionPersistence(),
+        searchService: (any SearchService)? = nil
     ) {
         self.account = account
         self.provider = provider
         self.selectionPersistence = selectionPersistence
+        self.searchService = searchService
     }
 
     public func loadMailboxes() async {
@@ -119,8 +134,49 @@ public final class AccountSessionModel: ObservableObject {
     public func closeSession() {
         messagesTask?.cancel()
         bodyTask?.cancel()
+        searchTask?.cancel()
         openBody = nil
         messages = []
+        searchResults = []
+    }
+
+    /// Debounced-поиск (200 мс) через `searchService`. Игнорирует пустой
+    /// запрос — тогда UI возвращается к обычному списку папки.
+    private func performSearch() {
+        searchTask?.cancel()
+        let raw = searchQuery.trimmingCharacters(in: .whitespaces)
+        guard !raw.isEmpty else {
+            searchResults = []
+            isSearching = false
+            return
+        }
+        guard let service = searchService else {
+            return
+        }
+        let accountID = account.id
+        let mailboxID = selectedMailboxID
+        isSearching = true
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            if Task.isCancelled { return }
+            do {
+                let hits = try await service.search(
+                    rawQuery: raw,
+                    accountID: accountID,
+                    mailboxID: mailboxID,
+                    limit: 200
+                )
+                if Task.isCancelled { return }
+                await MainActor.run { [weak self] in
+                    self?.searchResults = hits
+                    self?.isSearching = false
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.isSearching = false
+                }
+            }
+        }
     }
 
     // MARK: - Mail-3: действия из ReaderToolbar
