@@ -25,6 +25,15 @@ let package = Package(
             name: "AITests",
             dependencies: ["AI", "Storage"],
             path: "Tests/AITests"
+        ),
+        .executableTarget(
+            name: "ClassifierSmoke",
+            dependencies: ["AI", "Core"],
+            path: "Sources/ClassifierSmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
         )
     ]
 )

@@ -48,6 +48,9 @@ echo "▶ run Actions smoke (Mail-4: delete/archive/setFlagged)"
 echo "▶ run Search smoke (Search-3: FTS5 + QueryParser)"
 (cd Packages/AppShell && swift run SearchSmoke)
 
+echo "▶ run Classifier smoke (AI-2: Classifier actor + ClassifyV1 prompt)"
+(cd Packages/AI && swift run ClassifierSmoke)
+
 echo "▶ render screenshots (A10: Light/Dark → Scripts/artifacts/screenshots/)"
 (cd Packages/AppShell && swift run ScreenshotSmoke)
 
