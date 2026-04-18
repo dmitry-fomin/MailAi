@@ -31,24 +31,35 @@ public struct MockSidebarProvider: SidebarProvider {
         )
 
         let totalUnread = mailboxes.reduce(0) { $0 + $1.unreadCount }
-        let smart = SidebarSection(
-            id: .smartBoxes,
-            title: "Смарт-ящики",
+
+        // AI-pack v1: «Отфильтрованные» — каркас для будущей AI-классификации.
+        // В v1 счётчики всегда 0 и клик открывает empty-state с подсказкой
+        // «включите AI-pack в настройках».
+        let filtered = SidebarSection(
+            id: .filtered,
+            title: "Отфильтрованные",
             items: [
                 SidebarItem(
-                    id: .init("smart-important"),
+                    id: .init("filtered-important"),
                     title: "Важное",
                     systemImage: "exclamationmark.circle",
                     unreadCount: 0,
                     kind: .smartImportant
                 ),
                 SidebarItem(
-                    id: .init("smart-unimportant"),
+                    id: .init("filtered-unimportant"),
                     title: "Неважно",
                     systemImage: "archivebox",
                     unreadCount: 0,
                     kind: .smartUnimportant
-                ),
+                )
+            ]
+        )
+
+        let smart = SidebarSection(
+            id: .smartBoxes,
+            title: "Смарт-ящики",
+            items: [
                 SidebarItem(
                     id: .init("smart-unread"),
                     title: "Непрочитанные",
@@ -88,6 +99,6 @@ public struct MockSidebarProvider: SidebarProvider {
             items: mailboxItems
         )
 
-        return [favorites, smart, onMac, accountSection]
+        return [favorites, filtered, smart, onMac, accountSection]
     }
 }

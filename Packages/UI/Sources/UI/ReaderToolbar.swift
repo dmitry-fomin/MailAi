@@ -45,9 +45,25 @@ public struct ReaderToolbar: View {
             toolButton("trash", "Удалить", action: actions.delete)
             toolButton("flag", "Флаг", action: actions.flag)
             Spacer()
+            // AI-pack v1: зарезервированный слот под sync-иконку.
+            // В v1 disabled и без действия; в AI-pack получит биндинг
+            // «статус серверной синхронизации папок».
+            aiSyncSlot
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+    }
+
+    @ViewBuilder
+    private var aiSyncSlot: some View {
+        Button(action: {}) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .frame(width: 28, height: 24)
+        }
+        .buttonStyle(.borderless)
+        .disabled(true)
+        .help("AI-синхронизация — недоступно (включится в AI-pack)")
+        .accessibilityLabel("AI-синхронизация недоступно")
     }
 
     @ViewBuilder

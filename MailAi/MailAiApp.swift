@@ -44,6 +44,11 @@ struct MailAiApp: App {
             OnboardingWindow(registry: registry, secretsStore: secretsStore)
         }
 
+        // AI-pack v1 scaffolding: окно настроек с placeholder-секцией.
+        Settings {
+            SettingsScene()
+        }
+
         // Окно-под-аккаунт. SwiftUI автоматически дедуплицирует окна по
         // значению `Account.ID`: повторный `openWindow(value:)` для того же
         // id сфокусирует уже открытое окно вместо создания нового.

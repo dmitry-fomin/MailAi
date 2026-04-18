@@ -3,6 +3,7 @@ import Core
 
 public enum SidebarSectionKind: String, Sendable, Hashable, Codable {
     case favorites
+    case filtered   // AI-pack scaffolding (v1): «Отфильтрованные»
     case smartBoxes
     case onMyMac
     case account

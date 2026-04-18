@@ -30,9 +30,15 @@ public struct AccountWindowScene: View {
             .frame(minWidth: 220)
             .focused($focus, equals: .sidebar)
         } content: {
-            messageList
-                .frame(minWidth: 320)
-                .focused($focus, equals: .list)
+            Group {
+                if let kind = selectedAIPackKind {
+                    aiPackEmptyState(for: kind)
+                } else {
+                    messageList
+                }
+            }
+            .frame(minWidth: 320)
+            .focused($focus, equals: .list)
         } detail: {
             reader
                 .frame(minWidth: 480)
@@ -63,6 +69,42 @@ public struct AccountWindowScene: View {
             session.selectedMailboxID = mailboxID
             Task { await session.loadMessages(for: mailboxID) }
         }
+        // smartImportant/smartUnimportant — AI-pack scaffolding, список пуст.
+        // selectedItemID уже меняется во VM; отдельной загрузки не делаем.
+    }
+
+    /// AI-pack v1: если выбрана папка «Важное»/«Неважно», список писем
+    /// подменяется на empty-state с подсказкой включить AI-pack.
+    private var selectedAIPackKind: SidebarItem.Kind? {
+        guard let id = sidebar.selectedItemID,
+              let item = sidebar.item(for: id) else { return nil }
+        switch item.kind {
+        case .smartImportant, .smartUnimportant:
+            return item.kind
+        default:
+            return nil
+        }
+    }
+
+    private func aiPackEmptyState(for kind: SidebarItem.Kind) -> some View {
+        let title: String
+        let icon: String
+        switch kind {
+        case .smartImportant:
+            title = "Важное"
+            icon = "exclamationmark.circle"
+        case .smartUnimportant:
+            title = "Неважно"
+            icon = "archivebox"
+        default:
+            title = ""
+            icon = "tray"
+        }
+        return ContentUnavailableView(
+            title,
+            systemImage: icon,
+            description: Text("AI-классификация пока недоступна. Включите AI-pack в настройках, чтобы эта папка начала заполняться автоматически.")
+        )
     }
 
     // MARK: - Message list
@@ -70,9 +112,9 @@ public struct AccountWindowScene: View {
     @ViewBuilder private var messageList: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            // Зарезервированный слот под прогресс-бар фоновой синхронизации
-            // (см. критерии приёмки SPECIFICATION.md).
-            Color.clear.frame(height: 0)
+            // AI-pack v1: collapsed-слот прогресс-бара фоновой классификации.
+            // Управляется отдельной VM в AI-pack; в v1 isActive=false.
+            ClassificationProgressBar()
             Divider()
             ScrollViewReader { proxy in
                 List(selection: Binding(
