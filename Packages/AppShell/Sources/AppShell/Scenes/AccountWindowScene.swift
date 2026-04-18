@@ -96,25 +96,7 @@ public struct AccountWindowScene: View {
     }
 
     @ViewBuilder private func row(for message: Message) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(message.from?.name ?? message.from?.address ?? "—")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text(MessageDateFormatter.short(message.date))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Text(message.subject)
-                .lineLimit(1)
-            if let preview = message.preview {
-                Text(preview)
-                    .lineLimit(1)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 4)
+        MessageRowView(message: message)
     }
 
     // MARK: - Reader
