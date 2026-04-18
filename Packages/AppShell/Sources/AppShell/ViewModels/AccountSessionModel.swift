@@ -122,4 +122,91 @@ public final class AccountSessionModel: ObservableObject {
         openBody = nil
         messages = []
     }
+
+    // MARK: - Mail-3: действия из ReaderToolbar
+
+    /// Возвращает true, если provider поддерживает server-side действия
+    /// (LiveAccountDataProvider). Mock-провайдер их не реализует — UI
+    /// рисует кнопки, но клик no-op.
+    public var supportsActions: Bool {
+        provider is any MailActionsProvider
+    }
+
+    public enum MailAction: Sendable, Equatable {
+        case delete
+        case archive
+        case toggleRead
+        case toggleFlag
+    }
+
+    /// Выполняет действие над текущим открытым письмом (`selectedMessageID`).
+    /// Обновляет локальные `messages`/`openBody` и ошибки кладёт в `lastError`.
+    public func perform(_ action: MailAction) async {
+        guard let actions = provider as? any MailActionsProvider else { return }
+        guard let messageID = selectedMessageID,
+              let current = messages.first(where: { $0.id == messageID }) else {
+            return
+        }
+        do {
+            switch action {
+            case .delete:
+                try await actions.delete(messageID: messageID)
+                removeFromList(messageID: messageID)
+                openBody = nil
+                bodyTask?.cancel()
+            case .archive:
+                try await actions.archive(messageID: messageID)
+                removeFromList(messageID: messageID)
+                openBody = nil
+                bodyTask?.cancel()
+            case .toggleRead:
+                let desired = !current.flags.contains(.seen)
+                try await actions.setRead(desired, messageID: messageID)
+                updateFlags(messageID: messageID) { flags in
+                    if desired { flags.insert(.seen) } else { flags.remove(.seen) }
+                }
+            case .toggleFlag:
+                let desired = !current.flags.contains(.flagged)
+                try await actions.setFlagged(desired, messageID: messageID)
+                updateFlags(messageID: messageID) { flags in
+                    if desired { flags.insert(.flagged) } else { flags.remove(.flagged) }
+                }
+            }
+        } catch let err as MailError {
+            lastError = err
+        } catch {
+            lastError = .network(.unknown)
+        }
+    }
+
+    private func removeFromList(messageID: Message.ID) {
+        messages.removeAll(where: { $0.id == messageID })
+        if selectedMessageID == messageID {
+            selectedMessageID = messages.first?.id
+        }
+    }
+
+    private func updateFlags(messageID: Message.ID, mutate: (inout MessageFlags) -> Void) {
+        guard let index = messages.firstIndex(where: { $0.id == messageID }) else { return }
+        let original = messages[index]
+        var flags = original.flags
+        mutate(&flags)
+        messages[index] = Message(
+            id: original.id,
+            accountID: original.accountID,
+            mailboxID: original.mailboxID,
+            uid: original.uid,
+            messageID: original.messageID,
+            threadID: original.threadID,
+            subject: original.subject,
+            from: original.from,
+            to: original.to,
+            cc: original.cc,
+            date: original.date,
+            preview: original.preview,
+            size: original.size,
+            flags: flags,
+            importance: original.importance
+        )
+    }
 }

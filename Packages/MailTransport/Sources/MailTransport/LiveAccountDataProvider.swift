@@ -10,7 +10,7 @@ import Secrets
 /// Полноценный `messages(in:page:)` со своим пулом соединений и авторизацией
 /// будет собран вместе с C4 (онбординг) — тогда провайдер начнёт сам
 /// открывать соединения по `Keychain`-секретам.
-public final class LiveAccountDataProvider: AccountDataProvider, @unchecked Sendable {
+public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProvider, @unchecked Sendable {
     public let account: Account
     public let store: any MetadataStore
     public let secrets: (any SecretsStore)?

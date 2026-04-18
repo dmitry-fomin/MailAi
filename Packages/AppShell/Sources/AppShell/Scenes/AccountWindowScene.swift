@@ -203,7 +203,14 @@ public struct AccountWindowScene: View {
         if let body = session.openBody, let message = selectedMessage {
             VStack(alignment: .leading, spacing: 0) {
                 ReaderHeaderView(message: message)
-                ReaderToolbar()
+                ReaderToolbar(actions: ReaderToolbar.Actions(
+                    reply: {},
+                    replyAll: {},
+                    forward: {},
+                    archive: { Task { await session.perform(.archive) } },
+                    delete: { Task { await session.perform(.delete) } },
+                    flag: { Task { await session.perform(.toggleFlag) } }
+                ))
                 Divider()
                 ReaderBodyView(
                     body: body,
