@@ -6,7 +6,8 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "MailTransport", targets: ["MailTransport"]),
-        .executable(name: "IMAPSmokeCLI", targets: ["IMAPSmokeCLI"])
+        .executable(name: "IMAPSmokeCLI", targets: ["IMAPSmokeCLI"]),
+        .executable(name: "IMAPPerfSmoke", targets: ["IMAPPerfSmoke"])
     ],
     dependencies: [
         .package(path: "../Core"),
@@ -36,6 +37,19 @@ let package = Package(
                 "MailTransport", "Core"
             ],
             path: "Sources/IMAPSmokeCLI",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
+        ),
+        .executableTarget(
+            name: "IMAPPerfSmoke",
+            dependencies: [
+                "MailTransport", "Core",
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio")
+            ],
+            path: "Sources/IMAPPerfSmoke",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableUpcomingFeature("ExistentialAny")
