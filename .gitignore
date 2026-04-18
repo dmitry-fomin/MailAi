@@ -12,6 +12,8 @@ DerivedData/
 *.xcodeproj/
 *.xcworkspace/
 !project.yml
+MailAi/Info.plist
+MailAi/MailAi.entitlements
 *.pbxuser
 *.mode1v3
 *.mode2v3
