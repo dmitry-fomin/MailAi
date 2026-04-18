@@ -1,6 +1,7 @@
 import Foundation
 import Core
 import Storage
+import Secrets
 
 /// Реальный провайдер данных: IMAP (SwiftNIO) + `MetadataStore`.
 ///
@@ -12,10 +13,44 @@ import Storage
 public final class LiveAccountDataProvider: AccountDataProvider, @unchecked Sendable {
     public let account: Account
     public let store: any MetadataStore
+    public let secrets: (any SecretsStore)?
+    public let endpoint: IMAPEndpoint
 
-    public init(account: Account, store: any MetadataStore = InMemoryMetadataStore()) {
+    public init(
+        account: Account,
+        store: any MetadataStore = InMemoryMetadataStore(),
+        secrets: (any SecretsStore)? = nil,
+        endpoint: IMAPEndpoint? = nil
+    ) {
         self.account = account
         self.store = store
+        self.secrets = secrets
+        self.endpoint = endpoint ?? IMAPEndpoint(
+            host: account.host,
+            port: Int(account.port),
+            security: account.security == .none ? .plain : .tls
+        )
+    }
+
+    /// Открывает временную IMAP-сессию (LOGIN → body → LOGOUT). Пароль берётся
+    /// из `SecretsStore`. Закрывается автоматически по выходу из замыкания.
+    /// Используется каждой публичной операцией провайдера до появления
+    /// session-scoped connection actor'а.
+    func withSession<Result: Sendable>(
+        _ body: @Sendable (IMAPConnection) async throws -> Result
+    ) async throws -> Result {
+        guard let secrets else {
+            throw MailError.unsupported("LiveAccountDataProvider сконструирован без SecretsStore — нельзя выполнить live-операцию.")
+        }
+        guard let password = try await secrets.password(forAccount: account.id) else {
+            throw MailError.keychain(.unknown)
+        }
+        return try await IMAPConnection.withOpen(endpoint: endpoint) { conn in
+            try await conn.login(username: account.username, password: password)
+            let result = try await body(conn)
+            try await conn.logout()
+            return result
+        }
     }
 
     // MARK: - AccountDataProvider (заглушки до C4)
