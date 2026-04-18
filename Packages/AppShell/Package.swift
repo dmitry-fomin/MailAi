@@ -5,7 +5,8 @@ let package = Package(
     name: "AppShell",
     platforms: [.macOS(.v14)],
     products: [
-        .library(name: "AppShell", targets: ["AppShell"])
+        .library(name: "AppShell", targets: ["AppShell"]),
+        .executable(name: "AppShellSmoke", targets: ["AppShellSmoke"])
     ],
     dependencies: [
         .package(path: "../Core"),
@@ -27,10 +28,19 @@ let package = Package(
                 .enableUpcomingFeature("ExistentialAny")
             ]
         ),
+        .executableTarget(
+            name: "AppShellSmoke",
+            dependencies: ["AppShell", "Core", "MockData"],
+            path: "Sources/AppShellSmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
+        ),
         .testTarget(
             name: "AppShellTests",
             dependencies: [
-                "AppShell", "Core", "Storage", "AI",
+                "AppShell", "Core", "MockData", "Storage", "AI",
                 .product(name: "GRDB", package: "GRDB.swift")
             ],
             path: "Tests/AppShellTests"

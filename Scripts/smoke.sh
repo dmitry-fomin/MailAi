@@ -20,4 +20,7 @@ echo "▶ run MockData smoke"
 echo "▶ run Secrets smoke"
 (cd Packages/Secrets && swift run SecretsSmoke)
 
+echo "▶ run AppShell smoke"
+(cd Packages/AppShell && swift run AppShellSmoke)
+
 echo "✅ all smoke checks passed"
