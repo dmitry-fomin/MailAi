@@ -127,19 +127,51 @@ public final class LiveAccountDataProvider: AccountDataProvider, @unchecked Send
     }
 
     public func messages(in mailbox: Mailbox.ID, page: Page) -> AsyncThrowingStream<[Message], any Error> {
-        // До C4 отдаём то, что уже лежит в store — этого достаточно, чтобы
-        // UI рендерил метаданные после внешней синхронизации (см. B9 CLI).
         let store = self.store
         return AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
-                    let messages = try await store.messages(in: mailbox, page: page)
-                    continuation.yield(messages)
+                    // Шаг 1: мгновенно отдаём то, что уже в store — чтобы UI
+                    // сразу показал список (офлайн-first).
+                    let cached = try await store.messages(in: mailbox, page: page)
+                    if !cached.isEmpty {
+                        continuation.yield(cached)
+                    }
+
+                    // Шаг 2: live-синхронизация последних page.limit писем:
+                    // SELECT → UID FETCH → upsert. После этого читаем из
+                    // store уже свежую страницу.
+                    let limit = UInt32(max(page.limit, 1))
+                    try await withSession { conn in
+                        let select = try await conn.select(mailbox.rawValue)
+                        guard let uidNext = select.uidNext, uidNext > 1 else {
+                            return  // пустая папка
+                        }
+                        let upper = uidNext - 1
+                        let lower = upper >= limit ? upper - (limit - 1) : 1
+                        let range = IMAPUIDRange(lower: lower, upper: upper)
+                        _ = try await self.syncHeaders(
+                            mailbox: mailbox,
+                            uidRange: range,
+                            using: conn
+                        )
+                    }
+
+                    if Task.isCancelled {
+                        continuation.finish()
+                        return
+                    }
+
+                    let fresh = try await store.messages(in: mailbox, page: page)
+                    continuation.yield(fresh)
+                    continuation.finish()
+                } catch is CancellationError {
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
