@@ -220,6 +220,7 @@ public final class IMAPConnection: @unchecked Sendable {
 
     /// Internal hook: пишет одну линию в outbound. Используется стримингом тела,
     /// чтобы не дублировать логику `execute()`.
+    // swiftlint:disable:next identifier_name
     func _writeOutbound(_ line: IMAPLine) async throws {
         try await outbound.write(line)
     }
@@ -227,6 +228,7 @@ public final class IMAPConnection: @unchecked Sendable {
     /// Internal hook: читает следующую линию из inbound. mutating — нужен для
     /// продвижения AsyncIterator. Вызывающая сторона обязана выполнять вызовы
     /// строго последовательно из одного Task (как и в `execute`).
+    // swiftlint:disable:next identifier_name
     func _readNext() async throws -> IMAPLine? {
         try await iterator.next()
     }

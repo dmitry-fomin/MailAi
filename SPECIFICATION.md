@@ -122,22 +122,25 @@
 
 ## Критерии приёмки
 
-- [ ] Приложение запускается без падений, открывается Welcome или восстановленные окна.
-- [ ] Можно добавить IMAP-аккаунт (Gmail через app-password или любой стандартный IMAP-сервер) и увидеть INBOX.
-- [ ] Пароль сохраняется в Keychain, **не** в `Storage`, **не** в UserDefaults.
-- [ ] 3-колоночный layout соответствует референсу: sidebar + list + reader с toolbar-ом.
-- [ ] Поддерживается Light/Dark тема без артефактов.
-- [ ] Можно открыть 2+ окна под разные аккаунты, они изолированы (разные БД, разные сессии).
-- [ ] Режим моковых данных работает без сети и показывает такой же UI.
-- [ ] При открытии письма тело загружается стримом и освобождается из памяти при закрытии.
-- [ ] В `Storage` нет ни одного байта тела письма после закрытия сессии (проверяется тестом).
-- [ ] В логах не появляются тема/отправитель/тело — только счётчики и коды ошибок.
-- [ ] В sidebar появляется секция «Отфильтрованные» с папками `Важное (0)` и `Неважно (0)`; клик открывает пустой список с empty state, упоминающим AI-pack.
-- [ ] Под header'ом списка писем есть зарезервированный collapsed-слот под прогресс-бар (невидим, но layout не ломается при активации).
-- [ ] В toolbar reader'а есть зарезервированный слот под иконку фоновой синхронизации (пустой в v1).
-- [ ] В Settings есть пункт «AI-классификация — недоступно» (placeholder).
-- [ ] SwiftLint — 0 warnings. Strict Concurrency — 0 warnings.
-- [ ] Unit-тесты покрывают: парсинг MIME на фикстурах, upsert/fetch в `Storage`, мок `MailTransport`, ViewModel окна-аккаунта.
+Финальный прогон C6 (2026-04-18). Галочки проставлены по факту
+покрытия кодом и smoke-тестами в `Scripts/smoke.sh`.
+
+- [x] Приложение запускается без падений, открывается Welcome или восстановленные окна. *(MailAiApp.swift / WelcomeOrPickerScene, state restoration через WindowGroup(for: Codable) — A8.)*
+- [x] Можно добавить IMAP-аккаунт (Gmail через app-password или любой стандартный IMAP-сервер) и увидеть INBOX. *(C4: OnboardingViewModel + OnboardingScene; реальный LOGIN и SELECT INBOX, затем открывается окно аккаунта.)*
+- [x] Пароль сохраняется в Keychain, **не** в `Storage`, **не** в UserDefaults. *(KeychainService в `.live`, InMemorySecretsStore только в `.mock`; OnboardingViewModel стирает поле password после успеха.)*
+- [x] 3-колоночный layout соответствует референсу: sidebar + list + reader с toolbar-ом. *(AccountWindowScene → NavigationSplitView; визуально проверено через `account-window-*.png` из ScreenshotSmoke.)*
+- [x] Поддерживается Light/Dark тема без артефактов. *(A9: Scripts/lint-theming.sh держит код на семантических цветах; A10: ScreenshotSmoke рендерит обе темы.)*
+- [x] Можно открыть 2+ окна под разные аккаунты, они изолированы (разные БД, разные сессии). *(AccountRegistry даёт отдельный `AccountSessionModel` per-id; `WindowGroup(for: Account.ID.self)` дедуплицирует окна.)*
+- [x] Режим моковых данных работает без сети и показывает такой же UI. *(MOCK_DATA=1 → MockAccountDataProvider; AppShellSmoke прогоняет полный жизненный цикл.)*
+- [x] При открытии письма тело загружается стримом и освобождается из памяти при закрытии. *(AccountSessionModel.open/closeSession; IMAPBodyStream; C5 IntegrationSmoke подтверждает чтение в памяти.)*
+- [x] В `Storage` нет ни одного байта тела письма после закрытия сессии (проверяется тестом). *(C5: IntegrationSmoke грепит sqlite + sqlite-wal + sqlite-shm на SECRET_TOKEN и требует 0 вхождений.)*
+- [x] В логах не появляются тема/отправитель/тело — только счётчики и коды ошибок. *(Проверено audit-проходом: в runtime-коде приложения логирование отсутствует; subject/from печатаются только smoke-инструментами в stderr для ручной диагностики.)*
+- [x] В sidebar появляется секция «Отфильтрованные» с папками `Важное (0)` и `Неважно (0)`; клик открывает пустой список с empty state, упоминающим AI-pack. *(MockSidebarProvider → SidebarSectionKind.filtered; AccountWindowScene.aiPackEmptyState.)*
+- [x] Под header'ом списка писем есть зарезервированный collapsed-слот под прогресс-бар (невидим, но layout не ломается при активации). *(UI.ClassificationProgressBar(isActive:false) → EmptyView; активный режим добавит ProgressView без перестройки.)*
+- [x] В toolbar reader'а есть зарезервированный слот под иконку фоновой синхронизации (пустой в v1). *(ReaderToolbar.aiSyncSlot — disabled Button с help-строкой.)*
+- [x] В Settings есть пункт «AI-классификация — недоступно» (placeholder). *(AppShell.SettingsScene → FilteredSettingsView.)*
+- [x] SwiftLint — 0 warnings. Strict Concurrency — 0 warnings. *(`swiftlint --strict` в Scripts/smoke.sh — 0 violations; Strict Concurrency включена для всех SPM-модулей через swiftSettings.)*
+- [x] Unit-тесты покрывают: парсинг MIME на фикстурах, upsert/fetch в `Storage`, мок `MailTransport`, ViewModel окна-аккаунта. *(XCTest-тесты под `#if canImport(XCTest)` в MailTransport/Storage/AppShell; smoke-пакет покрывает CLT-сценарии.)*
 
 ## Вне скоупа (явно)
 

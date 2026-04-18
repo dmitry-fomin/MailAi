@@ -14,6 +14,13 @@ swift build
 echo "▶ lint theming & Dynamic Type (A9)"
 "$ROOT/Scripts/lint-theming.sh"
 
+echo "▶ swiftlint --strict"
+if command -v swiftlint >/dev/null 2>&1; then
+  swiftlint --strict --quiet
+else
+  echo "⚠ swiftlint не установлен — пропускаем"
+fi
+
 echo "▶ run Core smoke"
 (cd Packages/Core && swift run CoreSmoke)
 
