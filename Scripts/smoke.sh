@@ -17,6 +17,9 @@ echo "▶ run Core smoke"
 echo "▶ run MockData smoke"
 (cd Packages/MockData && swift run MockDataSmoke)
 
+echo "▶ run Secrets smoke"
+(cd Packages/Secrets && swift run SecretsSmoke)
+
 echo "▶ run AppShell smoke"
 (cd Packages/AppShell && swift run AppShellSmoke)
 

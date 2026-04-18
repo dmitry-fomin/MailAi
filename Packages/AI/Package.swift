@@ -8,12 +8,13 @@ let package = Package(
         .library(name: "AI", targets: ["AI"])
     ],
     dependencies: [
-        .package(path: "../Core")
+        .package(path: "../Core"),
+        .package(path: "../Storage")
     ],
     targets: [
         .target(
             name: "AI",
-            dependencies: ["Core"],
+            dependencies: ["Core", "Storage"],
             path: "Sources/AI",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
@@ -22,7 +23,7 @@ let package = Package(
         ),
         .testTarget(
             name: "AITests",
-            dependencies: ["AI"],
+            dependencies: ["AI", "Storage"],
             path: "Tests/AITests"
         )
     ]
