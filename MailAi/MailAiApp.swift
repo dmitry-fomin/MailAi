@@ -2,6 +2,7 @@ import SwiftUI
 import AppShell
 import Core
 import MockData
+import Secrets
 
 @main
 struct MailAiApp: App {
@@ -20,13 +21,27 @@ struct MailAiApp: App {
         }
     }()
 
+    // C4: секреты — только в Keychain в live, in-memory в mock/dev.
+    private let secretsStore: any SecretsStore = {
+        let config = AppShellConfig.fromEnvironment()
+        switch config.mode {
+        case .mock: return InMemorySecretsStore()
+        case .live: return KeychainService(servicePrefix: "app.mailai")
+        }
+    }()
+
     var body: some Scene {
         // Стартовое окно — welcome / picker.
         WindowGroup("MailAi", id: "welcome") {
-            WelcomeOrPickerScene(registry: registry)
+            WelcomeOrPickerScene(registry: registry, secretsStore: secretsStore)
         }
         .commands {
             NewAccountWindowCommands()
+        }
+
+        // C4: онбординг — отдельное окно, показывается по нажатию «Добавить аккаунт».
+        WindowGroup("Новый аккаунт", id: "onboarding") {
+            OnboardingWindow(registry: registry, secretsStore: secretsStore)
         }
 
         // Окно-под-аккаунт. SwiftUI автоматически дедуплицирует окна по
@@ -49,20 +64,53 @@ struct MailAiApp: App {
 /// Экран первого окна: welcome, если аккаунтов нет, иначе — picker.
 private struct WelcomeOrPickerScene: View {
     @ObservedObject var registry: AccountRegistry
+    let secretsStore: any SecretsStore
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
 
     var body: some View {
         if registry.accounts.isEmpty {
             WelcomeScene(
-                onAddAccount: { /* TODO: фаза A1 — онбординг */ },
+                onAddAccount: { openWindow(id: "onboarding") },
                 onContinueWithMock: {}
             )
         } else {
             AccountPickerScene(
                 registry: registry,
-                onOpen: { id in openWindow(id: "account", value: id) }
+                onOpen: { id in openWindow(id: "account", value: id) },
+                onAddAccount: { openWindow(id: "onboarding") }
             )
         }
+    }
+}
+
+/// Обёртка окна онбординга: создаёт свежий `OnboardingViewModel` при
+/// каждом открытии и закрывает окно после успеха/отмены.
+private struct OnboardingWindow: View {
+    @ObservedObject var registry: AccountRegistry
+    let secretsStore: any SecretsStore
+    @StateObject private var model: OnboardingViewModel
+    @Environment(\.dismissWindow) private var dismissWindow
+    @Environment(\.openWindow) private var openWindow
+
+    init(registry: AccountRegistry, secretsStore: any SecretsStore) {
+        self.registry = registry
+        self.secretsStore = secretsStore
+        _model = StateObject(wrappedValue: OnboardingViewModel(
+            secretsStore: secretsStore,
+            registry: registry
+        ))
+    }
+
+    var body: some View {
+        OnboardingScene(
+            model: model,
+            onCancel: { dismissWindow(id: "onboarding") },
+            onCompleted: { account in
+                dismissWindow(id: "onboarding")
+                openWindow(id: "account", value: account.id)
+            }
+        )
     }
 }
 
