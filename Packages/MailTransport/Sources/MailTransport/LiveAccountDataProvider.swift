@@ -253,4 +253,89 @@ public final class LiveAccountDataProvider: AccountDataProvider, @unchecked Send
             skippedWithoutUID: skipped
         )
     }
+
+    // MARK: - Mail-2: действия над письмами
+
+    /// Удаляет письмо на сервере: SELECT mailbox → UID STORE +\Deleted → EXPUNGE.
+    /// После успеха снимает метаданные из `store` (через MetadataStore.delete).
+    public func delete(messageID: Message.ID) async throws {
+        guard let record = try await store.message(id: messageID) else {
+            throw MailError.messageNotFound(messageID)
+        }
+        try await withSession { conn in
+            _ = try await conn.select(record.mailboxID.rawValue)
+            try await conn.uidStore(uid: record.uid, operation: .add, flags: [.deleted])
+            try await conn.expunge()
+        }
+        try await store.delete(messageIDs: [messageID])
+    }
+
+    /// Перемещает письмо в папку «Архив». Если у аккаунта нет папки с
+    /// `role == .archive`, бросает `MailError.mailboxNotFound`.
+    public func archive(messageID: Message.ID) async throws {
+        try await move(messageID: messageID, toRole: .archive)
+    }
+
+    /// Перемещение по роли (.archive/.trash/.spam/...). Использует MOVE, если
+    /// сервер поддерживает, иначе fallback COPY+STORE+EXPUNGE. После —
+    /// синхронизирует метаданные в store.
+    public func move(messageID: Message.ID, toRole role: Mailbox.Role) async throws {
+        guard let record = try await store.message(id: messageID) else {
+            throw MailError.messageNotFound(messageID)
+        }
+        let mailboxes = try await mailboxes()
+        guard let destination = mailboxes.first(where: { $0.role == role }) else {
+            throw MailError.mailboxNotFound(Mailbox.ID(role.rawValue))
+        }
+        try await withSession { conn in
+            _ = try await conn.select(record.mailboxID.rawValue)
+            let caps = try await conn.capability()
+            let hasMove = caps.contains { $0.uppercased() == "MOVE" }
+            if hasMove {
+                try await conn.uidMove(uid: record.uid, to: destination.path)
+            } else {
+                try await conn.uidMoveFallback(uid: record.uid, to: destination.path)
+            }
+        }
+        // Обновляем метаданные: стираем старую запись, чтобы UI сразу
+        // перестроил список исходной папки. Новую версию подтянет
+        // следующий вызов messages(in:) для целевой папки.
+        try await store.delete(messageIDs: [messageID])
+    }
+
+    /// Устанавливает/снимает системный IMAP-флаг (\Seen/\Flagged/\Deleted/...).
+    /// После успеха обновляет запись в store (перечитывает с сервера одну UID'у).
+    public func setFlag(
+        _ flag: IMAPConnection.StandardFlag,
+        on messageID: Message.ID,
+        enabled: Bool
+    ) async throws {
+        guard let record = try await store.message(id: messageID) else {
+            throw MailError.messageNotFound(messageID)
+        }
+        try await withSession { conn in
+            _ = try await conn.select(record.mailboxID.rawValue)
+            try await conn.uidStore(
+                uid: record.uid,
+                operation: enabled ? .add : .remove,
+                flags: [flag]
+            )
+            // Ресинхронизация одной записи, чтобы UI увидел новые флаги.
+            _ = try await self.syncHeaders(
+                mailbox: record.mailboxID,
+                uidRange: IMAPUIDRange(lower: record.uid, upper: record.uid),
+                using: conn
+            )
+        }
+    }
+
+    /// Удобная обёртка для «прочитано / непрочитано».
+    public func setRead(_ read: Bool, messageID: Message.ID) async throws {
+        try await setFlag(.seen, on: messageID, enabled: read)
+    }
+
+    /// Удобная обёртка для «флажок».
+    public func setFlagged(_ flagged: Bool, messageID: Message.ID) async throws {
+        try await setFlag(.flagged, on: messageID, enabled: flagged)
+    }
 }
