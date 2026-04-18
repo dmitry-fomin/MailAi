@@ -53,10 +53,77 @@ public final class LiveAccountDataProvider: AccountDataProvider, @unchecked Send
         }
     }
 
-    // MARK: - AccountDataProvider (заглушки до C4)
+    // MARK: - AccountDataProvider
 
     public func mailboxes() async throws -> [Mailbox] {
-        throw MailError.unsupported("LiveAccountDataProvider.mailboxes — подключение собирается в C4")
+        let entries = try await withSession { conn in
+            try await conn.list()
+        }
+        let accountID = account.id
+        let mailboxes = entries.map { entry -> Mailbox in
+            let role = Self.mapRole(flags: entry.flags, path: entry.path)
+            return Mailbox(
+                id: Mailbox.ID(entry.path),
+                accountID: accountID,
+                name: Self.displayName(for: entry.path, role: role),
+                path: entry.path,
+                role: role,
+                unreadCount: 0,
+                totalCount: 0,
+                uidValidity: nil
+            )
+        }
+        // Персистентный список папок живёт в store вместе с MetadataStore
+        // (Live-3): offline-режим пока не нужен — UI перестраивает sidebar
+        // при каждом открытии окна.
+        return mailboxes
+    }
+
+    /// Маппит RFC 6154 SPECIAL-USE flags и имя папки на `Mailbox.Role`.
+    /// Порядок проверки важен: сначала точные SPECIAL-USE, потом хёрестика
+    /// по имени — разные сервера шлют флаги по-разному.
+    static func mapRole(flags: [String], path: String) -> Mailbox.Role {
+        let normalizedFlags = Set(flags.map { $0.lowercased() })
+        if normalizedFlags.contains("\\inbox") { return .inbox }
+        if normalizedFlags.contains("\\sent") { return .sent }
+        if normalizedFlags.contains("\\drafts") { return .drafts }
+        if normalizedFlags.contains("\\trash") { return .trash }
+        if normalizedFlags.contains("\\junk") { return .spam }
+        if normalizedFlags.contains("\\archive") || normalizedFlags.contains("\\all") { return .archive }
+        if normalizedFlags.contains("\\flagged") { return .flagged }
+        // Fallback по имени (основные раскладки большинства IMAP-серверов).
+        let upper = path.uppercased()
+        let tail = upper.split(whereSeparator: { $0 == "/" || $0 == "." }).last.map(String.init) ?? upper
+        switch tail {
+        case "INBOX":                       return .inbox
+        case "SENT", "SENT ITEMS", "SENT MESSAGES", "ОТПРАВЛЕННЫЕ", "ISPOLZOVANO":
+            return .sent
+        case "DRAFTS", "ЧЕРНОВИКИ":         return .drafts
+        case "TRASH", "DELETED", "DELETED ITEMS", "КОРЗИНА", "УДАЛЁННЫЕ":
+            return .trash
+        case "SPAM", "JUNK", "JUNK E-MAIL", "СПАМ":
+            return .spam
+        case "ARCHIVE", "ALL MAIL", "АРХИВ", "ВСЯ ПОЧТА":
+            return .archive
+        default:                            return .custom
+        }
+    }
+
+    /// Человекочитаемое имя папки: последний сегмент иерархии. Для INBOX
+    /// возвращаем «Входящие», остальные системные — тоже локализуем.
+    static func displayName(for path: String, role: Mailbox.Role) -> String {
+        switch role {
+        case .inbox:   return "Входящие"
+        case .sent:    return "Отправленные"
+        case .drafts:  return "Черновики"
+        case .trash:   return "Корзина"
+        case .spam:    return "Спам"
+        case .archive: return "Архив"
+        case .flagged: return "С флажком"
+        case .custom:
+            let segments = path.split(whereSeparator: { $0 == "/" || $0 == "." })
+            return segments.last.map(String.init) ?? path
+        }
     }
 
     public func messages(in mailbox: Mailbox.ID, page: Page) -> AsyncThrowingStream<[Message], any Error> {
