@@ -5,7 +5,8 @@ let package = Package(
     name: "MailTransport",
     platforms: [.macOS(.v14)],
     products: [
-        .library(name: "MailTransport", targets: ["MailTransport"])
+        .library(name: "MailTransport", targets: ["MailTransport"]),
+        .executable(name: "IMAPSmokeCLI", targets: ["IMAPSmokeCLI"])
     ],
     dependencies: [
         .package(path: "../Core"),
@@ -24,6 +25,17 @@ let package = Package(
                 .product(name: "NIOSSL", package: "swift-nio-ssl")
             ],
             path: "Sources/MailTransport",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
+        ),
+        .executableTarget(
+            name: "IMAPSmokeCLI",
+            dependencies: [
+                "MailTransport", "Core"
+            ],
+            path: "Sources/IMAPSmokeCLI",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableUpcomingFeature("ExistentialAny")
