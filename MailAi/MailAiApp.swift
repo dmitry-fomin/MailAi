@@ -6,11 +6,18 @@ import MockData
 @main
 struct MailAiApp: App {
     @StateObject private var registry: AccountRegistry = {
-        // На фазе A используем mock-режим: один готовый аккаунт из
-        // MockAccountDataProvider. В режиме .live аккаунты будут добавляться
-        // через OnboardingScene (фаза A1).
-        let mock = MockAccountDataProvider()
-        return AccountRegistry(accounts: [mock.account], mode: .mock)
+        // C3: режим выбирается переменной окружения MOCK_DATA. По умолчанию —
+        // .live (LiveAccountDataProvider); в live-режиме реестр стартует
+        // пустым — аккаунты добавит онбординг (C4). В .mock подкладываем
+        // демо-аккаунт из MockAccountDataProvider для dev-прогонов.
+        let config = AppShellConfig.fromEnvironment()
+        switch config.mode {
+        case .mock:
+            let mock = MockAccountDataProvider()
+            return AccountRegistry(accounts: [mock.account], mode: .mock)
+        case .live:
+            return AccountRegistry(accounts: [], mode: .live)
+        }
     }()
 
     var body: some Scene {

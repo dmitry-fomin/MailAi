@@ -61,6 +61,20 @@ enum AppShellSmokeRunner {
         let missing = await registry.session(for: .init("unknown"))
         check("Неизвестный Account.ID → nil", missing == nil)
 
+        // C3: AppShellConfig.fromEnvironment — MOCK_DATA управляет режимом.
+        check("MOCK_DATA=1 → .mock",
+              AppShellConfig.fromEnvironment(["MOCK_DATA": "1"]).mode == .mock)
+        check("MOCK_DATA отсутствует → .live",
+              AppShellConfig.fromEnvironment([:]).mode == .live)
+        check("MOCK_DATA=0 → .live",
+              AppShellConfig.fromEnvironment(["MOCK_DATA": "0"]).mode == .live)
+
+        // Фабрика возвращает live-провайдер для .live — сам LiveAccountDataProvider
+        // ещё throws (фаза B), но тип должен быть правильным.
+        let liveProvider = AccountDataProviderFactory.make(for: provider.account, mode: .live)
+        check("Factory для .live возвращает LiveAccountDataProvider",
+              String(describing: type(of: liveProvider)).contains("LiveAccountDataProvider"))
+
         print("\nAll AppShell smoke checks passed.")
     }
 }
