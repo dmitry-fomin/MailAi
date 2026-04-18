@@ -1,0 +1,81 @@
+name: MailAi
+options:
+  bundleIdPrefix: local.mailai
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+  xcodeVersion: "15.4"
+  minimumXcodeGenVersion: "2.38.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY: YES
+    ENABLE_HARDENED_RUNTIME: YES
+    CODE_SIGN_STYLE: Automatic
+    DEAD_CODE_STRIPPING: YES
+    GCC_TREAT_WARNINGS_AS_ERRORS: YES
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+
+packages:
+  Core:         { path: Packages/Core }
+  Secrets:      { path: Packages/Secrets }
+  Storage:      { path: Packages/Storage }
+  MailTransport: { path: Packages/MailTransport }
+  AI:           { path: Packages/AI }
+  UI:           { path: Packages/UI }
+  MockData:     { path: Packages/MockData }
+  AppShell:     { path: Packages/AppShell }
+
+targets:
+  MailAi:
+    type: application
+    platform: macOS
+    sources:
+      - path: MailAi
+    info:
+      path: MailAi/Info.plist
+      properties:
+        CFBundleName: MailAi
+        CFBundleDisplayName: MailAi
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: "14.0"
+        NSHumanReadableCopyright: ""
+    entitlements:
+      path: MailAi/MailAi.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+        com.apple.security.files.user-selected.read-write: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: local.mailai.MailAi
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        GENERATE_INFOPLIST_FILE: NO
+    dependencies:
+      - package: Core
+      - package: Secrets
+      - package: Storage
+      - package: MailTransport
+      - package: AI
+      - package: UI
+      - package: MockData
+      - package: AppShell
+
+schemes:
+  MailAi:
+    build:
+      targets:
+        MailAi: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: true
+    profile:
+      config: Release
+    archive:
+      config: Release

@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "MailAi",
+  "project_id": "2f7fde54-b188-4769-9b6b-ecf3efebed6f"
+}

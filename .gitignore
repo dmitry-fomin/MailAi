@@ -1,0 +1,31 @@
+# Beads / Dolt files
+.dolt/
+*.db
+.beads-credential-key
+
+# Swift / SPM / Xcode
+.build/
+Packages/*/.build/
+.swiftpm/
+Packages/*/.swiftpm/
+DerivedData/
+*.xcodeproj/
+*.xcworkspace/
+!project.yml
+MailAi/Info.plist
+MailAi/MailAi.entitlements
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+xcuserdata/
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/settings.json
+
+# Logs
+*.log
