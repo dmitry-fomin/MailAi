@@ -75,6 +75,39 @@ enum AppShellSmokeRunner {
         check("Factory для .live возвращает LiveAccountDataProvider",
               String(describing: type(of: liveProvider)).contains("LiveAccountDataProvider"))
 
+        // A8: SelectionPersistence — выбор папки восстанавливается из store.
+        let persistence = InMemorySelectionPersistence()
+        let accountID = Account.ID("acc-A8-test")
+        let mailboxID = Mailbox.ID("mbx-archive")
+        check("persistence пусто для нового аккаунта",
+              persistence.selectedMailbox(for: accountID) == nil)
+        persistence.setSelectedMailbox(mailboxID, for: accountID)
+        check("persistence возвращает сохранённую папку",
+              persistence.selectedMailbox(for: accountID) == mailboxID)
+        persistence.setSelectedMailbox(nil, for: accountID)
+        check("persistence очищает запись при setSelectedMailbox(nil:)",
+              persistence.selectedMailbox(for: accountID) == nil)
+
+        // A8: AccountSessionModel.selectedMailboxID автоматически персистит изменения.
+        let persistSession = InMemorySelectionPersistence()
+        let session2 = await AccountSessionModel(
+            account: provider.account,
+            provider: provider,
+            selectionPersistence: persistSession
+        )
+        await session2.loadMailboxes()
+        let saved = persistSession.selectedMailbox(for: provider.account.id)
+        check("после loadMailboxes выбор сохранён в persistence", saved != nil)
+
+        // Выбираем другую папку — должна уехать в persistence.
+        let otherMailbox = await session2.mailboxes.first(where: { $0.role != .inbox })
+        if let other = otherMailbox {
+            await MainActor.run { session2.selectedMailboxID = other.id }
+            check("persistence обновляется при смене selectedMailboxID",
+                  persistSession.selectedMailbox(for: provider.account.id) == other.id)
+        }
+        session2.closeSession()
+
         print("\nAll AppShell smoke checks passed.")
     }
 }

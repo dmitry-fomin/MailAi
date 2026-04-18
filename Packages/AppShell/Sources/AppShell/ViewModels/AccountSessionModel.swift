@@ -8,9 +8,17 @@ import Core
 public final class AccountSessionModel: ObservableObject {
     public let account: Account
     public let provider: any AccountDataProvider
+    public let selectionPersistence: any SelectionPersistence
 
     @Published public private(set) var mailboxes: [Mailbox] = []
-    @Published public var selectedMailboxID: Mailbox.ID?
+    @Published public var selectedMailboxID: Mailbox.ID? {
+        didSet {
+            // A8: персистим выбор папки сразу, чтобы при падении/relaunch
+            // восстановить состояние.
+            guard oldValue != selectedMailboxID else { return }
+            selectionPersistence.setSelectedMailbox(selectedMailboxID, for: account.id)
+        }
+    }
     @Published public private(set) var messages: [Message] = []
     @Published public var selectedMessageID: Message.ID?
     @Published public private(set) var openBody: MessageBody?
@@ -21,9 +29,14 @@ public final class AccountSessionModel: ObservableObject {
     private var messagesTask: Task<Void, Never>?
     private var bodyTask: Task<Void, Never>?
 
-    public init(account: Account, provider: any AccountDataProvider) {
+    public init(
+        account: Account,
+        provider: any AccountDataProvider,
+        selectionPersistence: any SelectionPersistence = InMemorySelectionPersistence()
+    ) {
         self.account = account
         self.provider = provider
+        self.selectionPersistence = selectionPersistence
     }
 
     public func loadMailboxes() async {
@@ -33,7 +46,13 @@ public final class AccountSessionModel: ObservableObject {
             let list = try await provider.mailboxes()
             mailboxes = list
             if selectedMailboxID == nil {
-                selectedMailboxID = list.first(where: { $0.role == .inbox })?.id ?? list.first?.id
+                // A8: предпочитаем сохранённый выбор, иначе — INBOX/первый.
+                let restored = selectionPersistence.selectedMailbox(for: account.id)
+                if let id = restored, list.contains(where: { $0.id == id }) {
+                    selectedMailboxID = id
+                } else {
+                    selectedMailboxID = list.first(where: { $0.role == .inbox })?.id ?? list.first?.id
+                }
             }
             if let mailbox = selectedMailboxID { await loadMessages(for: mailbox) }
         } catch let err as MailError {

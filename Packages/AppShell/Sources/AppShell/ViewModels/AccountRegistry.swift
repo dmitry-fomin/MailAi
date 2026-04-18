@@ -13,12 +13,18 @@ import Core
 public final class AccountRegistry: ObservableObject {
     @Published public private(set) var accounts: [Account]
     public let mode: AppShellMode
+    public let selectionPersistence: any SelectionPersistence
 
     private var sessions: [Account.ID: AccountSessionModel] = [:]
 
-    public init(accounts: [Account] = [], mode: AppShellMode) {
+    public init(
+        accounts: [Account] = [],
+        mode: AppShellMode,
+        selectionPersistence: any SelectionPersistence = DefaultsSelectionPersistence()
+    ) {
         self.accounts = accounts
         self.mode = mode
+        self.selectionPersistence = selectionPersistence
     }
 
     public func register(_ account: Account) {
@@ -35,7 +41,11 @@ public final class AccountRegistry: ObservableObject {
         if let existing = sessions[id] { return existing }
         guard let account = account(with: id) else { return nil }
         let provider = AccountDataProviderFactory.make(for: account, mode: mode)
-        let session = AccountSessionModel(account: account, provider: provider)
+        let session = AccountSessionModel(
+            account: account,
+            provider: provider,
+            selectionPersistence: selectionPersistence
+        )
         sessions[id] = session
         return session
     }
