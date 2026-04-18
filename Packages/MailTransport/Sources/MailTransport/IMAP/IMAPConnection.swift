@@ -131,6 +131,63 @@ public final class IMAPConnection {
         _ = try? await execute("LOGOUT")
     }
 
+    /// B8: IDLE (RFC 2177). Отправляет `IDLE`, ждёт `+ continuation`, затем
+    /// читает untagged-события и передаёт их в `onEvent` до отмены задачи
+    /// или ошибки канала. По `CancellationError` отправляет `DONE` и ждёт
+    /// финальный tagged OK. Реконнект и re-IDLE каждые 29 мин — зона
+    /// ответственности `IMAPReconnectSupervisor` поверх этого примитива.
+    @discardableResult
+    public func idle(
+        onEvent: (IMAPUntaggedResponse) -> Void = { _ in }
+    ) async throws -> IMAPTaggedResponse {
+        let tag = await tagGenerator.next()
+        try await outbound.write(IMAPLine("\(tag) IDLE"))
+
+        // Ждём первую строку: либо continuation "+ idling", либо tagged
+        // (сервер отказал), либо untagged-событие.
+        guard let first = try await iterator.next() else {
+            throw IMAPConnectionError.channelClosed
+        }
+        switch IMAPParser.parse(first.raw) {
+        case .tagged(let t) where t.tag == tag:
+            return t
+        case .untagged(let u):
+            onEvent(u)
+        case .tagged, .continuation:
+            break
+        }
+
+        do {
+            while true {
+                try Task.checkCancellation()
+                guard let line = try await iterator.next() else {
+                    throw IMAPConnectionError.channelClosed
+                }
+                switch IMAPParser.parse(line.raw) {
+                case .tagged(let t) where t.tag == tag:
+                    return t
+                case .untagged(let u):
+                    onEvent(u)
+                case .tagged, .continuation:
+                    continue
+                }
+            }
+        } catch is CancellationError {
+            try await outbound.write(IMAPLine("DONE"))
+            while let line = try await iterator.next() {
+                switch IMAPParser.parse(line.raw) {
+                case .tagged(let t) where t.tag == tag:
+                    return t
+                case .untagged(let u):
+                    onEvent(u)
+                default:
+                    continue
+                }
+            }
+            throw IMAPConnectionError.channelClosed
+        }
+    }
+
     /// B6: UID FETCH для диапазона — возвращает распарсенные FETCH-ответы.
     /// Untagged-линии, которые не являются FETCH (EXISTS, RECENT и т.п.),
     /// игнорируются. Ошибки парсинга отдельных строк — пропускаются, чтобы
