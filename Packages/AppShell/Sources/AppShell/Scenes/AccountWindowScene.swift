@@ -2,19 +2,21 @@ import SwiftUI
 import Core
 import UI
 
-/// Пустой каркас 3-колоночного окна-аккаунта. Реальные `UI`-компоненты
-/// (MessageRowView, MailboxRowView, ReaderHeaderView) появятся в A3–A5.
 public struct AccountWindowScene: View {
     @ObservedObject var session: AccountSessionModel
+    @StateObject private var sidebar: SidebarViewModel
 
     public init(session: AccountSessionModel) {
         self.session = session
+        _sidebar = StateObject(wrappedValue: SidebarViewModel(account: session.account))
     }
 
     public var body: some View {
         NavigationSplitView {
-            sidebar
-                .frame(minWidth: 220)
+            SidebarView(viewModel: sidebar) { item in
+                handleSelection(item)
+            }
+            .frame(minWidth: 220)
         } content: {
             messageList
                 .frame(minWidth: 320)
@@ -25,60 +27,24 @@ public struct AccountWindowScene: View {
         .navigationTitle(session.account.email)
         .task {
             await session.loadMailboxes()
+            await sidebar.rebuild(with: session.mailboxes)
+            if let mailboxID = sidebar.mailboxID(for: sidebar.selectedItemID) {
+                session.selectedMailboxID = mailboxID
+                await session.loadMessages(for: mailboxID)
+            }
+        }
+        .onChange(of: session.mailboxes) { _, newValue in
+            Task { await sidebar.rebuild(with: newValue) }
         }
         .onDisappear {
             session.closeSession()
         }
     }
 
-    // MARK: - Sidebar
-
-    @ViewBuilder private var sidebar: some View {
-        List(selection: Binding(
-            get: { session.selectedMailboxID },
-            set: { id in
-                session.selectedMailboxID = id
-                if let id { Task { await session.loadMessages(for: id) } }
-            }
-        )) {
-            Section("Избранное") {
-                Text("Флажки")
-                Text("Черновики")
-            }
-            Section("Отфильтрованные") {
-                Label("Важное", systemImage: "exclamationmark.circle")
-                    .badge(0)
-                Label("Неважно", systemImage: "archivebox")
-                    .badge(0)
-            }
-            Section(session.account.email) {
-                ForEach(session.mailboxes) { mailbox in
-                    HStack {
-                        Label(mailbox.name, systemImage: icon(for: mailbox.role))
-                        Spacer()
-                        if mailbox.unreadCount > 0 {
-                            Text("\(mailbox.unreadCount)")
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
-                        }
-                    }
-                    .tag(mailbox.id as Mailbox.ID?)
-                }
-            }
-        }
-        .listStyle(.sidebar)
-    }
-
-    private func icon(for role: Mailbox.Role) -> String {
-        switch role {
-        case .inbox:   return "tray.and.arrow.down"
-        case .sent:    return "paperplane"
-        case .drafts:  return "pencil"
-        case .archive: return "archivebox"
-        case .trash:   return "trash"
-        case .spam:    return "xmark.octagon"
-        case .flagged: return "flag"
-        case .custom:  return "folder"
+    private func handleSelection(_ item: SidebarItem) {
+        if case .mailbox(let mailboxID, _) = item.kind {
+            session.selectedMailboxID = mailboxID
+            Task { await session.loadMessages(for: mailboxID) }
         }
     }
 

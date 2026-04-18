@@ -38,7 +38,7 @@ let package = Package(
         ),
         .testTarget(
             name: "AppShellTests",
-            dependencies: ["AppShell"],
+            dependencies: ["AppShell", "Core", "MockData"],
             path: "Tests/AppShellTests"
         )
     ]
