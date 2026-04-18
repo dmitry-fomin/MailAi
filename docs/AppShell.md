@@ -21,6 +21,7 @@
 - **Одно окно — один актёр** для `AccountSession`. Состояния окон не пересекаются.
 - **File menu**: «New Window…» → выбор существующего аккаунта или добавление нового.
 - **State restoration**: при перезапуске восстанавливаем набор открытых окон-аккаунтов (без содержимого писем).
+- **Клавиатурная навигация (A6)**: `⌘1` фокус sidebar, `⌘2` фокус list, `↑/↓` двигают selection в списке (ряд подскраливается в видимую область), `Space` / `Shift+Space` — page down / up в reader (реализовано через `NSScrollView` в `UI.KeyboardScrollableReader`), `Tab` циклирует фокус sidebar → list → reader, `⌘R` — noop refresh (TODO интеграция в фазе B).
 
 ## API
 

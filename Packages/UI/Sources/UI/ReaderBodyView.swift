@@ -4,29 +4,37 @@ import Core
 /// Рендер тела письма. Plain — как есть; HTML — через безопасный санитайзер
 /// (без внешних ресурсов, без JS). Полноценный WKWebView с офлайн-политикой —
 /// задача более поздней фазы (см. docs/UI.md).
+///
+/// A6: скролл внутри reader обрабатывается нативным `NSScrollView`
+/// через `KeyboardScrollableReader`, что даёт Space (pageDown),
+/// Shift+Space (pageUp), стрелки и PageUp/PageDown.
 public struct ReaderBodyView: View {
     public let messageBody: MessageBody
+    @Binding public var isFocused: Bool
 
-    public init(body: MessageBody) {
+    public init(body: MessageBody, isFocused: Binding<Bool> = .constant(false)) {
         self.messageBody = body
+        self._isFocused = isFocused
     }
 
     public var body: some View {
-        ScrollView {
-            switch messageBody.content {
-            case .plain(let text):
-                Text(text)
-                    .font(.body)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
-            case .html(let html):
-                Text(HTMLSanitizer.plainText(from: html))
-                    .font(.body)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
-            }
+        KeyboardScrollableReader(isFocused: $isFocused) {
+            content
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        switch messageBody.content {
+        case .plain(let text):
+            Text(text)
+                .font(.body)
+                .textSelection(.enabled)
+        case .html(let html):
+            Text(HTMLSanitizer.plainText(from: html))
+                .font(.body)
+                .textSelection(.enabled)
         }
     }
 }
