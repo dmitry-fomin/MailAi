@@ -42,6 +42,9 @@ echo "▶ run Integration smoke (C5: end-to-end + memory inv.)"
 echo "▶ run Live-flow smoke (Live-6: LiveAccountDataProvider e2e)"
 (cd Packages/AppShell && swift run LiveFlowSmoke)
 
+echo "▶ run Actions smoke (Mail-4: delete/archive/setFlagged)"
+(cd Packages/AppShell && swift run ActionsSmoke)
+
 echo "▶ render screenshots (A10: Light/Dark → Scripts/artifacts/screenshots/)"
 (cd Packages/AppShell && swift run ScreenshotSmoke)
 
