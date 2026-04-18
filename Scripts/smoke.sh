@@ -11,6 +11,9 @@ cd "$ROOT"
 echo "▶ build all packages"
 swift build
 
+echo "▶ lint theming & Dynamic Type (A9)"
+"$ROOT/Scripts/lint-theming.sh"
+
 echo "▶ run Core smoke"
 (cd Packages/Core && swift run CoreSmoke)
 
