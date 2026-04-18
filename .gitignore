@@ -29,3 +29,6 @@ xcuserdata/
 
 # Logs
 *.log
+
+# A10: сгенерированные скриншот-артефакты (CI публикует отдельно).
+Scripts/artifacts/

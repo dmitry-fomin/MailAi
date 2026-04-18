@@ -7,7 +7,8 @@ let package = Package(
     products: [
         .library(name: "AppShell", targets: ["AppShell"]),
         .executable(name: "AppShellSmoke", targets: ["AppShellSmoke"]),
-        .executable(name: "IntegrationSmoke", targets: ["IntegrationSmoke"])
+        .executable(name: "IntegrationSmoke", targets: ["IntegrationSmoke"]),
+        .executable(name: "ScreenshotSmoke", targets: ["ScreenshotSmoke"])
     ],
     dependencies: [
         .package(path: "../Core"),
@@ -48,6 +49,17 @@ let package = Package(
                 .product(name: "NIOPosix", package: "swift-nio")
             ],
             path: "Sources/IntegrationSmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
+        ),
+        .executableTarget(
+            name: "ScreenshotSmoke",
+            dependencies: [
+                "AppShell", "Core", "MockData", "UI"
+            ],
+            path: "Sources/ScreenshotSmoke",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableUpcomingFeature("ExistentialAny")
