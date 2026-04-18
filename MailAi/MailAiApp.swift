@@ -77,7 +77,11 @@ private struct WelcomeOrPickerScene: View {
         if registry.accounts.isEmpty {
             WelcomeScene(
                 onAddAccount: { openWindow(id: "onboarding") },
-                onContinueWithMock: {}
+                onContinueWithMock: {
+                    let mock = MockAccountDataProvider()
+                    registry.register(mock.account, provider: mock)
+                    openWindow(id: "account", value: mock.account.id)
+                }
             )
         } else {
             AccountPickerScene(

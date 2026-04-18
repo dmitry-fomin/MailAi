@@ -32,6 +32,20 @@ public final class AccountRegistry: ObservableObject {
         accounts.append(account)
     }
 
+    /// Регистрирует аккаунт вместе с уже готовым `AccountDataProvider`.
+    /// Используется, когда provider нужно собрать явно (например, mock-режим
+    /// внутри `.live`-реестра для кнопки «Продолжить с демо-данными»).
+    public func register(_ account: Account, provider: any AccountDataProvider) {
+        register(account)
+        if sessions[account.id] == nil {
+            sessions[account.id] = AccountSessionModel(
+                account: account,
+                provider: provider,
+                selectionPersistence: selectionPersistence
+            )
+        }
+    }
+
     public func account(with id: Account.ID) -> Account? {
         accounts.first(where: { $0.id == id })
     }
