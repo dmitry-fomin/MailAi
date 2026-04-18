@@ -31,10 +31,20 @@ public struct AppShellConfig: Sendable {
 /// Фабрика провайдера данных. UI-слой обязан потреблять `any AccountDataProvider`,
 /// не зная деталей реализации.
 public enum AccountDataProviderFactory {
-    public static func make(for account: Account, mode: AppShellMode) -> any AccountDataProvider {
+    public static func make(
+        for account: Account,
+        mode: AppShellMode,
+        secrets: (any SecretsStore)? = nil,
+        store: (any MetadataStore)? = nil
+    ) -> any AccountDataProvider {
         switch mode {
         case .mock: return MockAccountDataProvider()
-        case .live: return LiveAccountDataProvider(account: account)
+        case .live:
+            return LiveAccountDataProvider(
+                account: account,
+                store: store ?? InMemoryMetadataStore(),
+                secrets: secrets
+            )
         }
     }
 }

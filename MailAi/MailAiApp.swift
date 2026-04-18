@@ -3,32 +3,46 @@ import AppShell
 import Core
 import MockData
 import Secrets
+import Storage
 
 @main
 struct MailAiApp: App {
-    @StateObject private var registry: AccountRegistry = {
-        // C3: режим выбирается переменной окружения MOCK_DATA. По умолчанию —
-        // .live (LiveAccountDataProvider); в live-режиме реестр стартует
-        // пустым — аккаунты добавит онбординг (C4). В .mock подкладываем
-        // демо-аккаунт из MockAccountDataProvider для dev-прогонов.
-        let config = AppShellConfig.fromEnvironment()
-        switch config.mode {
-        case .mock:
-            let mock = MockAccountDataProvider()
-            return AccountRegistry(accounts: [mock.account], mode: .mock)
-        case .live:
-            return AccountRegistry(accounts: [], mode: .live)
-        }
-    }()
-
     // C4: секреты — только в Keychain в live, in-memory в mock/dev.
-    private let secretsStore: any SecretsStore = {
+    private static let sharedSecrets: any SecretsStore = {
         let config = AppShellConfig.fromEnvironment()
         switch config.mode {
         case .mock: return InMemorySecretsStore()
         case .live: return KeychainService(servicePrefix: "app.mailai")
         }
     }()
+
+    @StateObject private var registry: AccountRegistry = {
+        // C3: режим выбирается переменной окружения MOCK_DATA. По умолчанию —
+        // .live (LiveAccountDataProvider); в live-режиме реестр стартует
+        // пустым — аккаунты добавит онбординг (C4). В .mock подкладываем
+        // демо-аккаунт из MockAccountDataProvider для dev-прогонов.
+        let config = AppShellConfig.fromEnvironment()
+        let dbPaths = try? DatabasePathProvider.default()
+        switch config.mode {
+        case .mock:
+            let mock = MockAccountDataProvider()
+            return AccountRegistry(
+                accounts: [mock.account],
+                mode: .mock,
+                secrets: sharedSecrets,
+                dbPaths: dbPaths
+            )
+        case .live:
+            return AccountRegistry(
+                accounts: [],
+                mode: .live,
+                secrets: sharedSecrets,
+                dbPaths: dbPaths
+            )
+        }
+    }()
+
+    private var secretsStore: any SecretsStore { Self.sharedSecrets }
 
     var body: some Scene {
         // Стартовое окно — welcome / picker.

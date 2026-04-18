@@ -1,5 +1,7 @@
 import Foundation
 import Core
+import Secrets
+import Storage
 
 /// Реестр аккаунтов приложения. Хранит список доступных аккаунтов и кэш
 /// `AccountSessionModel` по `Account.ID`, чтобы при повторном открытии окна
@@ -14,17 +16,24 @@ public final class AccountRegistry: ObservableObject {
     @Published public private(set) var accounts: [Account]
     public let mode: AppShellMode
     public let selectionPersistence: any SelectionPersistence
+    public let secrets: (any SecretsStore)?
+    public let dbPaths: DatabasePathProvider?
 
     private var sessions: [Account.ID: AccountSessionModel] = [:]
+    private var stores: [Account.ID: any MetadataStore] = [:]
 
     public init(
         accounts: [Account] = [],
         mode: AppShellMode,
-        selectionPersistence: any SelectionPersistence = DefaultsSelectionPersistence()
+        selectionPersistence: any SelectionPersistence = DefaultsSelectionPersistence(),
+        secrets: (any SecretsStore)? = nil,
+        dbPaths: DatabasePathProvider? = nil
     ) {
         self.accounts = accounts
         self.mode = mode
         self.selectionPersistence = selectionPersistence
+        self.secrets = secrets
+        self.dbPaths = dbPaths
     }
 
     public func register(_ account: Account) {
@@ -54,7 +63,14 @@ public final class AccountRegistry: ObservableObject {
     public func session(for id: Account.ID) -> AccountSessionModel? {
         if let existing = sessions[id] { return existing }
         guard let account = account(with: id) else { return nil }
-        let provider = AccountDataProviderFactory.make(for: account, mode: mode)
+        let store = persistentStore(for: account)
+        stores[id] = store
+        let provider = AccountDataProviderFactory.make(
+            for: account,
+            mode: mode,
+            secrets: secrets,
+            store: store
+        )
         let session = AccountSessionModel(
             account: account,
             provider: provider,
@@ -62,6 +78,21 @@ public final class AccountRegistry: ObservableObject {
         )
         sessions[id] = session
         return session
+    }
+
+    /// Собирает `MetadataStore` на диске (GRDB) на аккаунт, если у реестра
+    /// настроен `DatabasePathProvider`. Иначе отдаёт in-memory — подходит
+    /// для mock-режима и тестов.
+    private func persistentStore(for account: Account) -> any MetadataStore {
+        if let existing = stores[account.id] { return existing }
+        guard let dbPaths else { return InMemoryMetadataStore() }
+        let url = dbPaths.url(forAccountID: account.id.rawValue)
+        do {
+            return try GRDBMetadataStore(url: url)
+        } catch {
+            assertionFailure("Не смогли открыть GRDBMetadataStore: \(error)")
+            return InMemoryMetadataStore()
+        }
     }
 
     /// Сбрасывает сессию — вызывается при закрытии последнего окна аккаунта,
