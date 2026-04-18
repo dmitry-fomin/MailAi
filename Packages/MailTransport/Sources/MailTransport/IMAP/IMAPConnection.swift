@@ -15,7 +15,7 @@ public enum IMAPConnectionError: Error, Equatable, Sendable {
 ///
 /// Не Sendable: один writer/один reader. Вызовы `execute`-методов
 /// подразумеваются серийными в рамках одной Task.
-public final class IMAPConnection {
+public final class IMAPConnection: @unchecked Sendable {
     public let tagGenerator = IMAPTagGenerator()
     public let greeting: IMAPUntaggedResponse
 
@@ -214,6 +214,21 @@ public final class IMAPConnection {
             }
         }
         return (fetches, parseErrors)
+    }
+
+    // MARK: - Internal bridge (для IMAPBodyStream)
+
+    /// Internal hook: пишет одну линию в outbound. Используется стримингом тела,
+    /// чтобы не дублировать логику `execute()`.
+    func _writeOutbound(_ line: IMAPLine) async throws {
+        try await outbound.write(line)
+    }
+
+    /// Internal hook: читает следующую линию из inbound. mutating — нужен для
+    /// продвижения AsyncIterator. Вызывающая сторона обязана выполнять вызовы
+    /// строго последовательно из одного Task (как и в `execute`).
+    func _readNext() async throws -> IMAPLine? {
+        try await iterator.next()
     }
 
     // MARK: - Helpers
