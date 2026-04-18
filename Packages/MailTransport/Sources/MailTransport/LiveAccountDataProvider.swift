@@ -73,9 +73,12 @@ public final class LiveAccountDataProvider: AccountDataProvider, @unchecked Send
                 uidValidity: nil
             )
         }
-        // Персистентный список папок живёт в store вместе с MetadataStore
-        // (Live-3): offline-режим пока не нужен — UI перестраивает sidebar
-        // при каждом открытии окна.
+        // FK требует, чтобы account+mailbox-записи лежали в store до
+        // upsert'а сообщений в Live-3. Всё — только метаданные, не тела.
+        try await store.upsert(account)
+        for mailbox in mailboxes {
+            try await store.upsert(mailbox)
+        }
         return mailboxes
     }
 

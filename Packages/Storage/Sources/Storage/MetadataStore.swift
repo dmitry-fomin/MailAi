@@ -12,12 +12,26 @@ public protocol MetadataStore: Sendable {
     /// Live-провайдеру, чтобы при запросе `body(for:)` найти `UID`+`Mailbox.ID`
     /// без повторного полного скана.
     func message(id: Message.ID) async throws -> Message?
+    /// Обеспечивает наличие `Account`-записи (FK-родитель для mailbox).
+    func upsert(_ account: Account) async throws
+    /// Обеспечивает наличие `Mailbox`-записи (FK-родитель для message).
+    func upsert(_ mailbox: Mailbox) async throws
 }
 
 public actor InMemoryMetadataStore: MetadataStore {
     private var byMailbox: [Mailbox.ID: [Message.ID: Message]] = [:]
+    private var mailboxes: [Mailbox.ID: Mailbox] = [:]
+    private var accounts: [Account.ID: Account] = [:]
 
     public init() {}
+
+    public func upsert(_ account: Account) async throws {
+        accounts[account.id] = account
+    }
+
+    public func upsert(_ mailbox: Mailbox) async throws {
+        mailboxes[mailbox.id] = mailbox
+    }
 
     public func upsert(_ messages: [Message]) async throws {
         for msg in messages {

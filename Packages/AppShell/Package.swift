@@ -8,7 +8,8 @@ let package = Package(
         .library(name: "AppShell", targets: ["AppShell"]),
         .executable(name: "AppShellSmoke", targets: ["AppShellSmoke"]),
         .executable(name: "IntegrationSmoke", targets: ["IntegrationSmoke"]),
-        .executable(name: "ScreenshotSmoke", targets: ["ScreenshotSmoke"])
+        .executable(name: "ScreenshotSmoke", targets: ["ScreenshotSmoke"]),
+        .executable(name: "LiveFlowSmoke", targets: ["LiveFlowSmoke"])
     ],
     dependencies: [
         .package(path: "../Core"),
@@ -60,6 +61,20 @@ let package = Package(
                 "AppShell", "Core", "MockData", "UI"
             ],
             path: "Sources/ScreenshotSmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
+        ),
+        .executableTarget(
+            name: "LiveFlowSmoke",
+            dependencies: [
+                "AppShell", "Core", "Storage", "Secrets", "MailTransport",
+                .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio")
+            ],
+            path: "Sources/LiveFlowSmoke",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableUpcomingFeature("ExistentialAny")
