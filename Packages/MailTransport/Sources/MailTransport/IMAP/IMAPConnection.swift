@@ -131,6 +131,34 @@ public final class IMAPConnection {
         _ = try? await execute("LOGOUT")
     }
 
+    /// B6: UID FETCH для диапазона — возвращает распарсенные FETCH-ответы.
+    /// Untagged-линии, которые не являются FETCH (EXISTS, RECENT и т.п.),
+    /// игнорируются. Ошибки парсинга отдельных строк — пропускаются, чтобы
+    /// одна «кривая» запись не ломала всю синхронизацию; счётчик таких
+    /// ошибок возвращается во втором поле тупла.
+    public func uidFetchHeaders(
+        range: IMAPUIDRange,
+        attributes: String = IMAPFetchAttributes.headers
+    ) async throws -> (fetches: [IMAPFetchResponse], parseErrors: Int) {
+        let cmd = IMAPFetchAttributes.uidFetchCommand(range: range, attributes: attributes)
+        let result = try await execute(cmd)
+        try checkOK(result.tagged)
+
+        var fetches: [IMAPFetchResponse] = []
+        var parseErrors = 0
+        for u in result.untagged {
+            // Untagged вида "N FETCH (...)" — разбираем. Всё прочее игнор.
+            let parts = u.raw.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: false)
+            guard parts.count >= 2, parts[1].uppercased() == "FETCH" else { continue }
+            do {
+                fetches.append(try IMAPFetchResponse.parse(u))
+            } catch {
+                parseErrors += 1
+            }
+        }
+        return (fetches, parseErrors)
+    }
+
     // MARK: - Helpers
 
     private func checkOK(_ tagged: IMAPTaggedResponse) throws {
