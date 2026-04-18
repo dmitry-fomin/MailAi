@@ -102,40 +102,12 @@ public struct AccountWindowScene: View {
     // MARK: - Reader
 
     @ViewBuilder private var reader: some View {
-        if let body = session.openBody {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Image(systemName: "person.crop.circle.fill")
-                        .resizable()
-                        .frame(width: 36, height: 36)
-                        .foregroundStyle(.secondary)
-                    VStack(alignment: .leading) {
-                        Text(selectedMessageSubject)
-                            .font(.headline)
-                        Text(selectedMessageFrom)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                }
-                .padding()
-
+        if let body = session.openBody, let message = selectedMessage {
+            VStack(alignment: .leading, spacing: 0) {
+                ReaderHeaderView(message: message)
+                ReaderToolbar()
                 Divider()
-
-                ScrollView {
-                    switch body.content {
-                    case .plain(let text):
-                        Text(text)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding()
-                    case .html(let html):
-                        Text(html)
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
-                            .padding()
-                    }
-                }
+                ReaderBodyView(body: body)
             }
         } else {
             ContentUnavailableView(
@@ -146,19 +118,8 @@ public struct AccountWindowScene: View {
         }
     }
 
-    private var selectedMessageSubject: String {
-        guard let id = session.selectedMessageID,
-              let msg = session.messages.first(where: { $0.id == id }) else { return "—" }
-        return msg.subject
-    }
-
-    private var selectedMessageFrom: String {
-        guard let id = session.selectedMessageID,
-              let msg = session.messages.first(where: { $0.id == id }) else { return "" }
-        if let from = msg.from {
-            if let name = from.name { return "\(name) <\(from.address)>" }
-            return from.address
-        }
-        return ""
+    private var selectedMessage: Message? {
+        guard let id = session.selectedMessageID else { return nil }
+        return session.messages.first(where: { $0.id == id })
     }
 }
