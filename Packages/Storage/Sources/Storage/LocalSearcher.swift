@@ -51,7 +51,7 @@ public actor LocalSearcher {
             }
             if query.hasAttachment == true {
                 clauses.append("(m.flags & ?) != 0")
-                args.append(MessageFlags.hasAttachment.rawValue)
+                args.append(Int64(MessageFlags.hasAttachment.rawValue))
             }
             if let isUnread = query.isUnread {
                 if isUnread {
@@ -59,11 +59,11 @@ public actor LocalSearcher {
                 } else {
                     clauses.append("(m.flags & ?) != 0")
                 }
-                args.append(MessageFlags.seen.rawValue)
+                args.append(Int64(MessageFlags.seen.rawValue))
             }
             if query.isFlagged == true {
                 clauses.append("(m.flags & ?) != 0")
-                args.append(MessageFlags.flagged.rawValue)
+                args.append(Int64(MessageFlags.flagged.rawValue))
             }
             if let before = query.before {
                 clauses.append("m.date < ?")

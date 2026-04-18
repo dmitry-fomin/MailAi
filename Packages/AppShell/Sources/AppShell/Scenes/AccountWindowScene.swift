@@ -124,7 +124,7 @@ public struct AccountWindowScene: View {
                         session.open(messageID: id)
                     }
                 )) {
-                    ForEach(session.messages) { message in
+                    ForEach(displayedMessages) { message in
                         row(for: message)
                             .tag(message.id as Message.ID?)
                             .id(message.id)
@@ -153,8 +153,9 @@ public struct AccountWindowScene: View {
     }
 
     private func moveSelection(by delta: Int, proxy: ScrollViewProxy) {
-        guard !session.messages.isEmpty else { return }
-        let ids = session.messages.map(\.id)
+        let list = displayedMessages
+        guard !list.isEmpty else { return }
+        let ids = list.map(\.id)
         let currentIndex: Int
         if let selected = session.selectedMessageID,
            let idx = ids.firstIndex(of: selected) {
@@ -171,18 +172,47 @@ public struct AccountWindowScene: View {
     }
 
     @ViewBuilder private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(selectedMailboxName)
-                    .font(.headline)
-                Text("\(session.messages.count) писем")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(selectedMailboxName)
+                        .font(.headline)
+                    Text("\(displayedMessages.count) писем\(session.isSearching ? " · ищем…" : "")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
             }
-            Spacer()
+            if session.searchService != nil {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Поиск (from:alice has:attachment is:unread …)",
+                              text: Binding(
+                                get: { session.searchQuery },
+                                set: { session.searchQuery = $0 }
+                              ))
+                    .textFieldStyle(.roundedBorder)
+                    if !session.searchQuery.isEmpty {
+                        Button {
+                            session.searchQuery = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    /// Активный список в текущем режиме: результаты поиска или папки.
+    private var displayedMessages: [Message] {
+        let q = session.searchQuery.trimmingCharacters(in: .whitespaces)
+        return q.isEmpty ? session.messages : session.searchResults
     }
 
     private var selectedMailboxName: String {

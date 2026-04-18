@@ -45,6 +45,9 @@ echo "▶ run Live-flow smoke (Live-6: LiveAccountDataProvider e2e)"
 echo "▶ run Actions smoke (Mail-4: delete/archive/setFlagged)"
 (cd Packages/AppShell && swift run ActionsSmoke)
 
+echo "▶ run Search smoke (Search-3: FTS5 + QueryParser)"
+(cd Packages/AppShell && swift run SearchSmoke)
+
 echo "▶ render screenshots (A10: Light/Dark → Scripts/artifacts/screenshots/)"
 (cd Packages/AppShell && swift run ScreenshotSmoke)
 

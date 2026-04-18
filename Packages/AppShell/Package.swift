@@ -10,7 +10,8 @@ let package = Package(
         .executable(name: "IntegrationSmoke", targets: ["IntegrationSmoke"]),
         .executable(name: "ScreenshotSmoke", targets: ["ScreenshotSmoke"]),
         .executable(name: "LiveFlowSmoke", targets: ["LiveFlowSmoke"]),
-        .executable(name: "ActionsSmoke", targets: ["ActionsSmoke"])
+        .executable(name: "ActionsSmoke", targets: ["ActionsSmoke"]),
+        .executable(name: "SearchSmoke", targets: ["SearchSmoke"])
     ],
     dependencies: [
         .package(path: "../Core"),
@@ -90,6 +91,18 @@ let package = Package(
                 .product(name: "NIOPosix", package: "swift-nio")
             ],
             path: "Sources/ActionsSmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
+        ),
+        .executableTarget(
+            name: "SearchSmoke",
+            dependencies: [
+                "AppShell", "Core", "Storage",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
+            path: "Sources/SearchSmoke",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableUpcomingFeature("ExistentialAny")
