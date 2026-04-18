@@ -8,12 +8,16 @@ let package = Package(
         .library(name: "Storage", targets: ["Storage"])
     ],
     dependencies: [
-        .package(path: "../Core")
+        .package(path: "../Core"),
+        .package(url: "https://github.com/groue/GRDB.swift", from: "7.0.0")
     ],
     targets: [
         .target(
             name: "Storage",
-            dependencies: ["Core"],
+            dependencies: [
+                "Core",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
             path: "Sources/Storage",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
@@ -22,7 +26,10 @@ let package = Package(
         ),
         .testTarget(
             name: "StorageTests",
-            dependencies: ["Storage"],
+            dependencies: [
+                "Storage",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
             path: "Tests/StorageTests"
         )
     ]

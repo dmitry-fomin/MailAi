@@ -14,7 +14,8 @@ let package = Package(
         .package(path: "../Storage"),
         .package(path: "../Secrets"),
         .package(path: "../MailTransport"),
-        .package(path: "../AI")
+        .package(path: "../AI"),
+        .package(url: "https://github.com/groue/GRDB.swift", from: "7.0.0")
     ],
     targets: [
         .target(
@@ -28,7 +29,10 @@ let package = Package(
         ),
         .testTarget(
             name: "AppShellTests",
-            dependencies: ["AppShell"],
+            dependencies: [
+                "AppShell", "Core", "Storage", "AI",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
             path: "Tests/AppShellTests"
         )
     ]

@@ -10,12 +10,19 @@ let package = Package(
     dependencies: [
         .package(path: "../Core"),
         .package(path: "../Storage"),
-        .package(path: "../Secrets")
+        .package(path: "../Secrets"),
+        .package(url: "https://github.com/apple/swift-nio", from: "2.65.0"),
+        .package(url: "https://github.com/apple/swift-nio-ssl", from: "2.27.0")
     ],
     targets: [
         .target(
             name: "MailTransport",
-            dependencies: ["Core", "Storage", "Secrets"],
+            dependencies: [
+                "Core", "Storage", "Secrets",
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOSSL", package: "swift-nio-ssl")
+            ],
             path: "Sources/MailTransport",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
@@ -24,7 +31,12 @@ let package = Package(
         ),
         .testTarget(
             name: "MailTransportTests",
-            dependencies: ["MailTransport"],
+            dependencies: [
+                "MailTransport",
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOEmbedded", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio")
+            ],
             path: "Tests/MailTransportTests"
         )
     ]

@@ -1,0 +1,263 @@
+import Foundation
+import NIOCore
+import NIOPosix
+
+public enum IMAPConnectionError: Error, Equatable, Sendable {
+    case greetingMissing
+    case unexpectedGreeting(String)
+    case channelClosed
+    case commandFailed(status: IMAPResponseStatus, text: String)
+}
+
+/// Высокоуровневая IMAP-сессия. Живёт строго внутри замыкания
+/// `withOpen(...) { conn in ... }` — это соответствует
+/// `NIOAsyncChannel.executeThenClose` scoping.
+///
+/// Не Sendable: один writer/один reader. Вызовы `execute`-методов
+/// подразумеваются серийными в рамках одной Task.
+public final class IMAPConnection {
+    public let tagGenerator = IMAPTagGenerator()
+    public let greeting: IMAPUntaggedResponse
+
+    private var iterator: NIOAsyncChannelInboundStream<IMAPLine>.AsyncIterator
+    private let outbound: NIOAsyncChannelOutboundWriter<IMAPLine>
+
+    public typealias Channel = NIOAsyncChannel<IMAPLine, IMAPLine>
+
+    /// Открывает TCP+TLS соединение, читает greeting, передаёт `IMAPConnection`
+    /// в замыкание. Канал гарантированно закрыт после выхода.
+    public static func withOpen<R>(
+        endpoint: IMAPEndpoint,
+        eventLoopGroup: MultiThreadedEventLoopGroup = .singleton,
+        connectTimeout: TimeAmount = .seconds(10),
+        _ body: (IMAPConnection) async throws -> R
+    ) async throws -> R {
+        let channel = try await IMAPClientBootstrap.connect(
+            to: endpoint,
+            eventLoopGroup: eventLoopGroup,
+            connectTimeout: connectTimeout
+        )
+        return try await withOpen(channel: channel, body)
+    }
+
+    public static func withOpen<R>(
+        channel: Channel,
+        _ body: (IMAPConnection) async throws -> R
+    ) async throws -> R {
+        try await channel.executeThenClose { inbound, outbound in
+            var iter = inbound.makeAsyncIterator()
+            guard let line = try await iter.next() else {
+                throw IMAPConnectionError.greetingMissing
+            }
+            guard case .untagged(let greeting) = IMAPParser.parse(line.raw) else {
+                throw IMAPConnectionError.unexpectedGreeting(line.raw)
+            }
+            let kind = greeting.kind
+            guard kind == "OK" || kind == "PREAUTH" else {
+                throw IMAPConnectionError.unexpectedGreeting(line.raw)
+            }
+            let connection = IMAPConnection(
+                greeting: greeting,
+                iterator: iter,
+                outbound: outbound
+            )
+            return try await body(connection)
+        }
+    }
+
+    fileprivate init(
+        greeting: IMAPUntaggedResponse,
+        iterator: NIOAsyncChannelInboundStream<IMAPLine>.AsyncIterator,
+        outbound: NIOAsyncChannelOutboundWriter<IMAPLine>
+    ) {
+        self.greeting = greeting
+        self.iterator = iterator
+        self.outbound = outbound
+    }
+
+    /// Отправляет команду с очередным тегом и читает ответы до tagged.
+    public func execute(_ command: String) async throws -> IMAPCommandResult {
+        let tag = await tagGenerator.next()
+        try await outbound.write(IMAPLine("\(tag) \(command)"))
+
+        var untagged: [IMAPUntaggedResponse] = []
+        while let incoming = try await iterator.next() {
+            switch IMAPParser.parse(incoming.raw) {
+            case .untagged(let u):
+                untagged.append(u)
+            case .tagged(let t) where t.tag == tag:
+                return IMAPCommandResult(tagged: t, untagged: untagged)
+            case .tagged:
+                continue
+            case .continuation:
+                continue
+            }
+        }
+        throw IMAPConnectionError.channelClosed
+    }
+
+    // MARK: - Typed commands
+
+    public func capability() async throws -> [String] {
+        let result = try await execute("CAPABILITY")
+        try checkOK(result.tagged)
+        return result.untagged
+            .first { $0.kind == "CAPABILITY" }?
+            .raw
+            .split(separator: " ")
+            .dropFirst()
+            .map(String.init) ?? []
+    }
+
+    public func login(username: String, password: String) async throws {
+        let quoted = "\(Self.quote(username)) \(Self.quote(password))"
+        let result = try await execute("LOGIN \(quoted)")
+        try checkOK(result.tagged)
+    }
+
+    public func list(reference: String = "", pattern: String = "*") async throws -> [ListEntry] {
+        let result = try await execute("LIST \(Self.quote(reference)) \(Self.quote(pattern))")
+        try checkOK(result.tagged)
+        return result.untagged.compactMap(ListEntry.parse)
+    }
+
+    public func select(_ mailbox: String) async throws -> SelectResult {
+        let result = try await execute("SELECT \(Self.quote(mailbox))")
+        try checkOK(result.tagged)
+        return SelectResult.parse(untagged: result.untagged, taggedText: result.tagged.text)
+    }
+
+    public func logout() async throws {
+        _ = try? await execute("LOGOUT")
+    }
+
+    // MARK: - Helpers
+
+    private func checkOK(_ tagged: IMAPTaggedResponse) throws {
+        guard tagged.status == .ok else {
+            throw IMAPConnectionError.commandFailed(
+                status: tagged.status, text: tagged.text
+            )
+        }
+    }
+
+    static func quote(_ s: String) -> String {
+        let escaped = s
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
+}
+
+// MARK: - Parsed structures
+
+public struct ListEntry: Sendable, Equatable {
+    public let flags: [String]
+    public let delimiter: String?
+    public let path: String
+
+    public init(flags: [String], delimiter: String?, path: String) {
+        self.flags = flags
+        self.delimiter = delimiter
+        self.path = path
+    }
+
+    public static func parse(_ untagged: IMAPUntaggedResponse) -> ListEntry? {
+        guard untagged.kind == "LIST" else { return nil }
+        let body = untagged.raw.dropFirst("LIST".count).trimmingCharacters(in: .whitespaces)
+        guard body.hasPrefix("("),
+              let closeIdx = body.firstIndex(of: ")") else { return nil }
+        let flagsSub = body[body.index(after: body.startIndex)..<closeIdx]
+        let flags = flagsSub.split(separator: " ").map(String.init)
+        let rest = body[body.index(after: closeIdx)...].trimmingCharacters(in: .whitespaces)
+        let tokens = Self.tokenize(String(rest))
+        guard tokens.count >= 2 else { return nil }
+        let delim: String? = tokens[0] == "NIL" ? nil : tokens[0]
+        let path = tokens[1]
+        return ListEntry(flags: flags, delimiter: delim, path: path)
+    }
+
+    static func tokenize(_ s: String) -> [String] {
+        var tokens: [String] = []
+        var current = ""
+        var inQuotes = false
+        for ch in s {
+            if ch == "\"" {
+                if inQuotes {
+                    tokens.append(current)
+                    current = ""
+                }
+                inQuotes.toggle()
+            } else if ch == " " && !inQuotes {
+                if !current.isEmpty {
+                    tokens.append(current)
+                    current = ""
+                }
+            } else {
+                current.append(ch)
+            }
+        }
+        if !current.isEmpty { tokens.append(current) }
+        return tokens
+    }
+}
+
+public struct SelectResult: Sendable, Equatable {
+    public let exists: Int
+    public let recent: Int
+    public let uidValidity: UInt32?
+    public let uidNext: UInt32?
+    public let flags: [String]
+    public let readOnly: Bool
+
+    public init(exists: Int = 0, recent: Int = 0, uidValidity: UInt32? = nil,
+                uidNext: UInt32? = nil, flags: [String] = [], readOnly: Bool = false) {
+        self.exists = exists
+        self.recent = recent
+        self.uidValidity = uidValidity
+        self.uidNext = uidNext
+        self.flags = flags
+        self.readOnly = readOnly
+    }
+
+    static func parse(untagged: [IMAPUntaggedResponse], taggedText: String) -> SelectResult {
+        var exists = 0
+        var recent = 0
+        var uidValidity: UInt32?
+        var uidNext: UInt32?
+        var flags: [String] = []
+        for u in untagged {
+            let parts = u.raw.split(separator: " ", maxSplits: 1).map(String.init)
+            if parts.count == 2, let n = Int(parts[0]) {
+                if parts[1].uppercased() == "EXISTS" { exists = n }
+                else if parts[1].uppercased() == "RECENT" { recent = n }
+            }
+            if u.kind == "OK" {
+                if let v = Self.extractBracketed(u.raw, key: "UIDVALIDITY") {
+                    uidValidity = UInt32(v)
+                }
+                if let v = Self.extractBracketed(u.raw, key: "UIDNEXT") {
+                    uidNext = UInt32(v)
+                }
+            }
+            if u.kind == "FLAGS" {
+                let body = u.raw.dropFirst("FLAGS".count).trimmingCharacters(in: .whitespaces)
+                if body.hasPrefix("("), let close = body.firstIndex(of: ")") {
+                    let inside = body[body.index(after: body.startIndex)..<close]
+                    flags = inside.split(separator: " ").map(String.init)
+                }
+            }
+        }
+        let readOnly = taggedText.contains("[READ-ONLY]")
+        return SelectResult(exists: exists, recent: recent,
+                            uidValidity: uidValidity, uidNext: uidNext,
+                            flags: flags, readOnly: readOnly)
+    }
+
+    private static func extractBracketed(_ text: String, key: String) -> String? {
+        guard let open = text.range(of: "[\(key) ") else { return nil }
+        let afterKey = text[open.upperBound...]
+        guard let close = afterKey.firstIndex(of: "]") else { return nil }
+        return String(afterKey[..<close])
+    }
+}
