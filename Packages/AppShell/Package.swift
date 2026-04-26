@@ -11,7 +11,8 @@ let package = Package(
         .executable(name: "ScreenshotSmoke", targets: ["ScreenshotSmoke"]),
         .executable(name: "LiveFlowSmoke", targets: ["LiveFlowSmoke"]),
         .executable(name: "ActionsSmoke", targets: ["ActionsSmoke"]),
-        .executable(name: "SearchSmoke", targets: ["SearchSmoke"])
+        .executable(name: "SearchSmoke", targets: ["SearchSmoke"]),
+        .executable(name: "ClassificationSmoke", targets: ["ClassificationSmoke"])
     ],
     dependencies: [
         .package(path: "../Core"),
@@ -103,6 +104,15 @@ let package = Package(
                 .product(name: "GRDB", package: "GRDB.swift")
             ],
             path: "Sources/SearchSmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
+        ),
+        .executableTarget(
+            name: "ClassificationSmoke",
+            dependencies: ["AppShell"],
+            path: "Sources/ClassificationSmoke",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableUpcomingFeature("ExistentialAny")

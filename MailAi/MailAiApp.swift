@@ -4,6 +4,7 @@ import Core
 import MockData
 import Secrets
 import Storage
+import UI
 
 @main
 struct MailAiApp: App {
@@ -44,6 +45,18 @@ struct MailAiApp: App {
 
     private var secretsStore: any SecretsStore { Self.sharedSecrets }
 
+    /// Элементы аккаунтов для меню StatusBar.
+    private var statusBarAccounts: [StatusBarAccountItem] {
+        registry.accounts.map { account in
+            StatusBarAccountItem(
+                id: account.id,
+                email: account.email,
+                displayName: account.displayName,
+                unreadCount: registry.unreadCount(for: account.id)
+            )
+        }
+    }
+
     var body: some Scene {
         // Стартовое окно — welcome / picker.
         WindowGroup("MailAi", id: "welcome") {
@@ -76,6 +89,17 @@ struct MailAiApp: App {
                     description: Text("Закройте окно и выберите аккаунт заново.")
                 )
             }
+        }
+
+        // StatusBar: иконка в строке меню со счётчиком непрочитанных.
+        MenuBarExtra {
+            StatusBarMenuContent(
+                accounts: statusBarAccounts,
+                onOpenAccount: { id in openWindow(id: "account", value: id) },
+                onCompose: { openWindow(id: "welcome") }
+            )
+        } label: {
+            StatusBarBadgeLabel(unreadCount: registry.totalUnreadCount)
         }
     }
 }

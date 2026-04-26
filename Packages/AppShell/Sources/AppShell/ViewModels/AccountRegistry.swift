@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import Core
 import Secrets
 import Storage
@@ -21,6 +22,7 @@ public final class AccountRegistry: ObservableObject {
 
     private var sessions: [Account.ID: AccountSessionModel] = [:]
     private var stores: [Account.ID: any MetadataStore] = [:]
+    private var sessionCancellables: [Account.ID: AnyCancellable] = [:]
 
     public init(
         accounts: [Account] = [],
@@ -47,11 +49,13 @@ public final class AccountRegistry: ObservableObject {
     public func register(_ account: Account, provider: any AccountDataProvider) {
         register(account)
         if sessions[account.id] == nil {
-            sessions[account.id] = AccountSessionModel(
+            let session = AccountSessionModel(
                 account: account,
                 provider: provider,
                 selectionPersistence: selectionPersistence
             )
+            sessions[account.id] = session
+            observeSessionChanges(session)
         }
     }
 
@@ -82,6 +86,7 @@ public final class AccountRegistry: ObservableObject {
             searchService: search
         )
         sessions[id] = session
+        observeSessionChanges(session)
         return session
     }
 
@@ -105,5 +110,35 @@ public final class AccountRegistry: ObservableObject {
     public func releaseSession(for id: Account.ID) {
         sessions[id]?.closeSession()
         sessions.removeValue(forKey: id)
+        sessionCancellables.removeValue(forKey: id)
+    }
+
+    // MARK: - Unread Count (StatusBar)
+
+    /// Количество непрочитанных для аккаунта с активной сессией.
+    /// Считается по `mailboxes[].unreadCount` (серверные данные).
+    /// Возвращает 0, если сессия не создана или мэйлбоксы ещё не загружены.
+    public func unreadCount(for accountID: Account.ID) -> Int {
+        guard let session = sessions[accountID] else { return 0 }
+        return session.mailboxes.reduce(0) { $0 + $1.unreadCount }
+    }
+
+    /// Общее количество непрочитанных по всем активным сессиям.
+    /// Используется бейджем StatusBar.
+    public var totalUnreadCount: Int {
+        sessions.values.reduce(0) { sum, session in
+            sum + session.mailboxes.reduce(0) { $0 + $1.unreadCount }
+        }
+    }
+
+    /// Подписывается на `objectWillChange` сессии, чтобы изменения в
+    /// мэйлбоксах/письмах каскадно обновляли StatusBar.
+    private func observeSessionChanges(_ session: AccountSessionModel) {
+        let id = session.account.id
+        sessionCancellables[id] = session.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
     }
 }

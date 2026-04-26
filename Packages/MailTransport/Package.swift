@@ -7,7 +7,9 @@ let package = Package(
     products: [
         .library(name: "MailTransport", targets: ["MailTransport"]),
         .executable(name: "IMAPSmokeCLI", targets: ["IMAPSmokeCLI"]),
-        .executable(name: "IMAPPerfSmoke", targets: ["IMAPPerfSmoke"])
+        .executable(name: "IMAPPerfSmoke", targets: ["IMAPPerfSmoke"]),
+        .executable(name: "IMAPSessionSmoke", targets: ["IMAPSessionSmoke"]),
+        .executable(name: "SMTPSmoke", targets: ["SMTPSmoke"])
     ],
     dependencies: [
         .package(path: "../Core"),
@@ -55,6 +57,17 @@ let package = Package(
                 .enableUpcomingFeature("ExistentialAny")
             ]
         ),
+        .executableTarget(
+            name: "IMAPSessionSmoke",
+            dependencies: [
+                "MailTransport"
+            ],
+            path: "Sources/IMAPSessionSmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
+        ),
         .testTarget(
             name: "MailTransportTests",
             dependencies: [
@@ -64,6 +77,20 @@ let package = Package(
                 .product(name: "NIOPosix", package: "swift-nio")
             ],
             path: "Tests/MailTransportTests"
+        ),
+        .executableTarget(
+            name: "SMTPSmoke",
+            dependencies: [
+                "MailTransport", "Core",
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOSSL", package: "swift-nio-ssl")
+            ],
+            path: "Sources/SMTPSmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
         )
     ]
 )

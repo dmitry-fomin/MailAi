@@ -40,7 +40,119 @@ public actor ClassificationCoordinator {
         await queue.enqueue(messageIDs.map(\.rawValue))
     }
 
+    /// Прогоняет всю очередь через `processBatched`. Каждый батч
+    /// обрабатывается параллельно (до `maxParallel`), с retry при 429/5xx.
+    public func runUntilDrainedBatched() async {
+        let store = self.store
+        let classifier = self.classifier
+        let rules = self.rules
+        let log = self.log
+        let bodyFetcher = self.bodyFetcher
+
+        await queue.processBatched { batchIDs in
+            // Для каждого ID в батче — выполняем классификацию.
+            // Собираем результаты через TaskGroup.
+            let outcomes: [(String, Result<Void, ClassificationError>)] = await withTaskGroup(
+                of: (String, Result<Void, ClassificationError>).self
+            ) { group in
+                for rawID in batchIDs {
+                    group.addTask {
+                        do {
+                            let id = Message.ID(rawID)
+                            guard let msg = try await store.message(id: id) else { return (rawID, .success(())) }
+                            let (body, contentType) = try await bodyFetcher(id)
+                            let snippet = SnippetExtractor.extract(body: body, contentType: contentType)
+                            let active = try await rules.activeRules()
+
+                            let input = ClassificationInput(
+                                from: msg.from?.address ?? "",
+                                to: msg.to.map(\.address),
+                                subject: msg.subject,
+                                date: msg.date,
+                                listUnsubscribe: false,
+                                contentType: contentType,
+                                bodySnippet: snippet,
+                                activeRules: active
+                            )
+
+                            var result: ClassificationResult?
+                            do {
+                                result = try await classifier.classify(input: input)
+                            } catch let e as OpenRouterError {
+                                let classErr: ClassificationError
+                                switch e {
+                                case .rateLimited:
+                                    classErr = .rateLimited(retryAfter: nil)
+                                case .serverError(let code):
+                                    classErr = .serverError(statusCode: code)
+                                default:
+                                    classErr = .permanent(message: Self.code(for: e))
+                                }
+                                let hash = Self.sha256(msg.messageID ?? msg.id.rawValue)
+                                try? await log.append(AuditEntry(
+                                    messageIdHash: hash,
+                                    model: classifier.model,
+                                    tokensIn: 0, tokensOut: 0, durationMs: 0, confidence: 0,
+                                    errorCode: Self.code(for: e)
+                                ))
+                                return (rawID, .failure(classErr))
+                            } catch let e as ClassifierError {
+                                let hash = Self.sha256(msg.messageID ?? msg.id.rawValue)
+                                try? await log.append(AuditEntry(
+                                    messageIdHash: hash,
+                                    model: classifier.model,
+                                    tokensIn: 0, tokensOut: 0, durationMs: 0, confidence: 0,
+                                    errorCode: Self.code(for: e)
+                                ))
+                                return (rawID, .failure(.permanent(message: Self.code(for: e))))
+                            } catch {
+                                let hash = Self.sha256(msg.messageID ?? msg.id.rawValue)
+                                try? await log.append(AuditEntry(
+                                    messageIdHash: hash,
+                                    model: classifier.model,
+                                    tokensIn: 0, tokensOut: 0, durationMs: 0, confidence: 0,
+                                    errorCode: "unknown"
+                                ))
+                                return (rawID, .failure(.permanent(message: "unknown")))
+                            }
+
+                            if let result {
+                                try? await store.updateImportance(messageID: id, to: result.importance)
+                                let hash = Self.sha256(msg.messageID ?? msg.id.rawValue)
+                                try? await log.append(AuditEntry(
+                                    messageIdHash: hash,
+                                    model: classifier.model,
+                                    tokensIn: result.tokensIn,
+                                    tokensOut: result.tokensOut,
+                                    durationMs: result.durationMs,
+                                    confidence: result.confidence,
+                                    matchedRuleId: result.matchedRule
+                                ))
+                            }
+                            return (rawID, .success(()))
+                        } catch {
+                            return (rawID, .failure(.permanent(message: String(describing: error))))
+                        }
+                    }
+                }
+                return await group.reduce(into: []) { $0.append($1) }
+            }
+
+            var results: [String: ClassificationError?] = [:]
+            for (rawID, outcome) in outcomes {
+                switch outcome {
+                case .success:
+                    results[rawID] = nil
+                case .failure(let err):
+                    results[rawID] = err
+                }
+            }
+            return results
+        }
+    }
+
     /// Прогоняет всю очередь. Возвращается, когда очередь опустошена.
+    /// Legacy-метод — использует `processAll` (по одному элементу).
     public func runUntilDrained() async {
         let store = self.store
         let classifier = self.classifier
