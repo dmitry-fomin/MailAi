@@ -3,7 +3,7 @@ import NIOCore
 import NIOPosix
 
 /// Состояние жизненного цикла IMAP-сессии.
-public enum IMAPSessionState: Sendable {
+public enum IMAPSessionState: Sendable, Equatable {
     /// Сессия создана, но `start()` ещё не вызывался.
     case idle
     /// Открываем TCP+TLS соединение.
@@ -14,6 +14,18 @@ public enum IMAPSessionState: Sendable {
     case ready
     /// Соединение потеряно или закрыто. Ошибка — nil при явном `stop()`.
     case disconnected((any Error)?)
+
+    public static func == (lhs: IMAPSessionState, rhs: IMAPSessionState) -> Bool {
+        switch (lhs, rhs) {
+        case (.idle, .idle), (.connecting, .connecting),
+             (.authenticating, .authenticating), (.ready, .ready):
+            return true
+        case (.disconnected(let a), .disconnected(let b)):
+            return (a == nil) == (b == nil)
+        default:
+            return false
+        }
+    }
 }
 
 // MARK: - Errors
