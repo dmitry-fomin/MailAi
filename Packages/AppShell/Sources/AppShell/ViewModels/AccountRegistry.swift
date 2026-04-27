@@ -3,6 +3,7 @@ import Combine
 import Core
 import Secrets
 import Storage
+import GRDB
 
 /// Реестр аккаунтов приложения. Хранит список доступных аккаунтов и кэш
 /// `AccountSessionModel` по `Account.ID`, чтобы при повторном открытии окна
@@ -103,6 +104,18 @@ public final class AccountRegistry: ObservableObject {
             assertionFailure("Не смогли открыть GRDBMetadataStore: \(error)")
             return InMemoryMetadataStore()
         }
+    }
+
+    /// Возвращает GRDB pool для аккаунта, если хранилище — `GRDBMetadataStore`.
+    /// Используется для построения `RulesRepository` в Settings.
+    public func databasePool(for accountID: Account.ID) -> DatabasePool? {
+        if let store = stores[accountID] as? GRDBMetadataStore {
+            return store.pool
+        }
+        guard let account = account(with: accountID) else { return nil }
+        let store = persistentStore(for: account)
+        stores[accountID] = store
+        return (store as? GRDBMetadataStore)?.pool
     }
 
     /// Сбрасывает сессию — вызывается при закрытии последнего окна аккаунта,

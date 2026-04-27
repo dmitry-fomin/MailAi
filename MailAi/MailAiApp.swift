@@ -83,9 +83,9 @@ struct MailAiApp: App {
             OnboardingWindow(registry: registry, secretsStore: secretsStore)
         }
 
-        // AI-pack v1 scaffolding: окно настроек с placeholder-секцией.
+        // AI-6: окно настроек, секция AI-pack — ключ OpenRouter, модель, правила.
         Settings {
-            SettingsScene()
+            SettingsScene(registry: registry, secretsStore: secretsStore)
         }
 
         // Окно-под-аккаунт. SwiftUI автоматически дедуплицирует окна по
