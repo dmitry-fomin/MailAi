@@ -227,6 +227,99 @@ public final class ComposeViewModel: ObservableObject {
         if case .saved = draftState { draftState = .idle }
     }
 
+    // MARK: - Factory methods
+
+    /// Reply: заполняет поле To = from исходного письма, Subject = "Re: …",
+    /// тело — цитата исходного письма.
+    public static func makeReply(
+        to original: Message,
+        accountEmail: String,
+        accountDisplayName: String?,
+        sendProvider: (any SendProvider)?,
+        draftSaver: DraftSaver?
+    ) -> ComposeViewModel {
+        let vm = ComposeViewModel(
+            accountEmail: accountEmail,
+            accountDisplayName: accountDisplayName,
+            sendProvider: sendProvider,
+            draftSaver: draftSaver
+        )
+        vm.to = original.from?.address ?? ""
+        vm.subject = Self.reSubject(original.subject)
+        vm.body = Self.quotedBody(original)
+        return vm
+    }
+
+    /// ReplyAll: To = from исходного, Cc = все to + cc оригинала минус себя.
+    public static func makeReplyAll(
+        to original: Message,
+        accountEmail: String,
+        accountDisplayName: String?,
+        sendProvider: (any SendProvider)?,
+        draftSaver: DraftSaver?
+    ) -> ComposeViewModel {
+        let vm = ComposeViewModel(
+            accountEmail: accountEmail,
+            accountDisplayName: accountDisplayName,
+            sendProvider: sendProvider,
+            draftSaver: draftSaver
+        )
+        vm.to = original.from?.address ?? ""
+        let ccAddresses = (original.to + original.cc)
+            .map(\.address)
+            .filter { $0.lowercased() != accountEmail.lowercased() }
+        vm.cc = ccAddresses.joined(separator: ", ")
+        vm.subject = Self.reSubject(original.subject)
+        vm.body = Self.quotedBody(original)
+        return vm
+    }
+
+    /// Forward: To/Cc пусты, Subject = "Fwd: …", тело — цитата оригинала.
+    public static func makeForward(
+        of original: Message,
+        accountEmail: String,
+        accountDisplayName: String?,
+        sendProvider: (any SendProvider)?,
+        draftSaver: DraftSaver?
+    ) -> ComposeViewModel {
+        let vm = ComposeViewModel(
+            accountEmail: accountEmail,
+            accountDisplayName: accountDisplayName,
+            sendProvider: sendProvider,
+            draftSaver: draftSaver
+        )
+        vm.subject = Self.fwdSubject(original.subject)
+        vm.body = Self.quotedBody(original)
+        return vm
+    }
+
+    // MARK: - Quote helpers
+
+    private static func reSubject(_ subject: String) -> String {
+        subject.hasPrefix("Re:") ? subject : "Re: \(subject)"
+    }
+
+    private static func fwdSubject(_ subject: String) -> String {
+        subject.hasPrefix("Fwd:") ? subject : "Fwd: \(subject)"
+    }
+
+    private static func quotedBody(_ message: Message) -> String {
+        let dateStr = Self.quoteDate(message.date)
+        let fromStr = message.from?.address ?? ""
+        var quote = "\n\n— Пересланное сообщение —\nОт: \(fromStr)\nДата: \(dateStr)\nТема: \(message.subject)"
+        if let preview = message.preview, !preview.isEmpty {
+            quote += "\n\n\(preview)"
+        }
+        return quote
+    }
+
+    private static func quoteDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.dateFormat = "d MMM yyyy"
+        return formatter.string(from: date)
+    }
+
     // MARK: - Helpers
 
     private static func describe(_ err: MailError) -> String {

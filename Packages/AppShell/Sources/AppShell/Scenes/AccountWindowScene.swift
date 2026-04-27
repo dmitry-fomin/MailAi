@@ -20,6 +20,16 @@ public struct AccountWindowScene: View {
     /// AI-5: short toast после успешного создания правила.
     @State private var ruleConfirmation: String?
 
+    /// Wrapper для `ComposeViewModel`, чтобы использовать `sheet(item:)`.
+    /// `ComposeViewModel` не `Identifiable`, поэтому оборачиваем.
+    private struct ComposeRequest: Identifiable {
+        let id = UUID()
+        let model: ComposeViewModel
+    }
+
+    /// Текущий запрос на открытие окна Compose. nil — sheet не показан.
+    @State private var composeRequest: ComposeRequest?
+
     public enum FocusZone: Hashable {
         case sidebar
         case list
@@ -101,6 +111,9 @@ public struct AccountWindowScene: View {
                 },
                 onCancel: { ruleProposal = nil }
             )
+        }
+        .sheet(item: $composeRequest) { request in
+            ComposeScene(model: request.model, onClose: { composeRequest = nil })
         }
         .overlay(alignment: .bottom) {
             if let toast = ruleConfirmation {
@@ -340,9 +353,36 @@ public struct AccountWindowScene: View {
             VStack(alignment: .leading, spacing: 0) {
                 ReaderHeaderView(message: message)
                 ReaderToolbar(actions: ReaderToolbar.Actions(
-                    reply: {},
-                    replyAll: {},
-                    forward: {},
+                    reply: {
+                        guard let msg = selectedMessage else { return }
+                        composeRequest = ComposeRequest(model: ComposeViewModel.makeReply(
+                            to: msg,
+                            accountEmail: session.account.email,
+                            accountDisplayName: session.account.displayName,
+                            sendProvider: session.provider as? any SendProvider,
+                            draftSaver: nil
+                        ))
+                    },
+                    replyAll: {
+                        guard let msg = selectedMessage else { return }
+                        composeRequest = ComposeRequest(model: ComposeViewModel.makeReplyAll(
+                            to: msg,
+                            accountEmail: session.account.email,
+                            accountDisplayName: session.account.displayName,
+                            sendProvider: session.provider as? any SendProvider,
+                            draftSaver: nil
+                        ))
+                    },
+                    forward: {
+                        guard let msg = selectedMessage else { return }
+                        composeRequest = ComposeRequest(model: ComposeViewModel.makeForward(
+                            of: msg,
+                            accountEmail: session.account.email,
+                            accountDisplayName: session.account.displayName,
+                            sendProvider: session.provider as? any SendProvider,
+                            draftSaver: nil
+                        ))
+                    },
                     archive: { Task { await session.perform(.archive) } },
                     delete: { Task { await session.perform(.delete) } },
                     flag: { Task { await session.perform(.toggleFlag) } },
