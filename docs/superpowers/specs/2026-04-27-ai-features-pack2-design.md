@@ -433,25 +433,30 @@ CREATE INDEX idx_snooze_until ON snoozed_messages(snooze_until);
 
 Фаза 1 (ядро):
 1. **SchemaV4** — миграция + ai_cache
-2. **A: Суммаризация** — killer feature, протокол заглушка уже есть
-3. **H: Action Items** — маленький промпт, большой value
+2. **P: Prompt Editor** — PromptStore + bundled defaults + Settings UI
+3. **A: Суммаризация** — killer feature, протокол заглушка уже есть
+4. **H: Action Items** — маленький промпт, большой value
 
 Фаза 2 (productivity):
-4. **B: Quick Reply** — wow-эффект
-5. **I: Категории** — расширение ClassifyV1 (бесплатно)
-6. **E: Bulk-delete** — двухшаговый, самый сложный UI
+5. **B: Quick Reply** — wow-эффект
+6. **I: Категории** — расширение ClassifyV1 (бесплатно)
+7. **E: Bulk-delete** — двухшаговый, самый сложный UI
 
 Фаза 3 (nice-to-have):
-7. **G: Перевод** — простое, но полное тело в AI
-8. **C: AI-сниппет** — batch, затратный по токенам
-9. **J: Snooze** — новая механика (timer, возврат)
-10. **K: Профили** — агрегация без AI-запросов
+8. **G: Перевод** — простое, но полное тело в AI
+9. **C: AI-сниппет** — batch, затратный по токенам
+10. **J: Snooze** — новая механика (timer, возврат)
+11. **K: Профили** — агрегация без AI-запросов
 
 ## Зависимости
 
 ```
 SchemaV4 ──→ A (summary), B (quick reply), C (snippet),
-             E (bulk), H (actions), I (categories)
+             E (bulk), H (actions), I (categories),
+             J (snooze)
+
+P (prompt editor) ──→ независима (можно делать параллельно со SchemaV4)
+  но все AI-фичи должны инжектить PromptStore вместо хардкода промптов
 
 A (summary) ──→ независима
 B (quick reply) ──→ зависит от Compose integration
@@ -464,10 +469,130 @@ J (snooze) ──→ зависит от SchemaV4 + timer mechanism
 K (profiles) ──→ независима (чистая агрегация)
 ```
 
+## P. Prompt Editor (редактор промптов в Settings)
+
+### Суть
+Master-detail UI для редактирования всех AI-промптов пользователем.
+Аналогично редактированию подписей в стандартном Mail.app:
+левая колонка — список промптов с иконками, правая — текстовый редактор.
+
+### Редактируемые промпты (9 шт.)
+
+| Файл | Иконка (SF Symbol) | Название |
+|---|---|---|
+| `classify.md` | `tag` | Классификация |
+| `summarize.md` | `doc.text.magnifyingglass` | Суммаризация |
+| `extract_actions.md` | `checklist` | Действия |
+| `quick_reply.md` | `bubble.left.and.bubble.right` | Быстрый ответ |
+| `bulk_delete.md` | `trash.circle` | Массовое удаление |
+| `translate.md` | `globe` | Перевод |
+| `categorize.md` | `folder.badge.gearshape` | Категории |
+| `snooze.md` | `alarm` | Напоминания |
+| `snippet.md` | `text.alignleft` | AI-превью |
+
+### Хранение файлов
+
+```
+~/.mailai/
+└── prompts/
+    ├── classify.md       # пользовательский override (может не быть)
+    ├── summarize.md
+    ├── extract_actions.md
+    ├── quick_reply.md
+    ├── bulk_delete.md
+    ├── translate.md
+    ├── categorize.md
+    ├── snooze.md
+    └── snippet.md
+```
+
+**Механика:**
+1. **Дефолтные промпты**: bundled в app bundle
+   (`Packages/AI/Resources/Prompts/*.md` — SwiftPM resource).
+2. **Пользовательские правки**: `~/.mailai/prompts/*.md`.
+3. **Загрузка**: `PromptStore.load("summarize")` →
+   если `~/.mailai/prompts/summarize.md` существует → читаем его,
+   иначе → читаем bundled default.
+4. **Сохранение**: `PromptStore.save("summarize", text)` →
+   записывает в `~/.mailai/prompts/summarize.md`,
+   создаёт директорию если нет.
+5. **Reset**: `PromptStore.reset("summarize")` →
+   `rm ~/.mailai/prompts/summarize.md` → следующий load вернёт bundled.
+6. **isCustom**: сравнение с bundled (хеш или пофайловое).
+
+### Протокол
+
+```swift
+/// Чтение/запись промптов. Thread-safe.
+public protocol PromptStore: Sendable {
+    /// Загрузить промпт (кастомный или дефолтный).
+    func load(_ name: String) async throws -> String
+    /// Сохранить кастомный промпт.
+    func save(_ name: String, content: String) async throws
+    /// Сбросить к дефолтному (удалить кастомный файл).
+    func reset(_ name: String) async throws
+    /// Отличается ли от дефолта?
+    func isCustom(_ name: String) async throws -> Bool
+    /// Список всех промптов с метаданными.
+    func listAll() async throws -> [PromptEntry]
+}
+
+public struct PromptEntry: Sendable, Identifiable {
+    public let id: String           // 'summarize', 'classify', ...
+    public let icon: String         // SF Symbol name
+    public let displayName: String  // «Суммаризация»
+    public var content: String      // текущий текст
+    public var isCustom: Bool       // отличается от дефолта?
+}
+```
+
+### UI
+
+```
+┌─────────────────────────────────────────────────┐
+│ Settings → AI Промпты                           │
+├──────────────┬──────────────────────────────────┤
+│ 🏷 Классиф.  │  System prompt для классификации │
+│ 🔍 Суммар.   │  писем на Important/Unimportant. │
+│ ✅ Действия   │                                  │
+│ 💬 Ответ     │  Анализируй: от кого, тема,      │
+│ 🗑 Удаление  │  snippet. Формат: JSON {          │
+│ 🌐 Перевод   │    "importance": "...",           │
+│ 📁 Категории │    "confidence": 0.0-1.0,         │
+│ ⏰ Напомин.  │    "reasoning": "..."             │
+│ 📝 Превью    │  }                                │
+│              │                                  │
+│              │  ─────────────────────────────── │
+│              │  ● Изменён    [Сбросить к стандарту] │
+└──────────────┴──────────────────────────────────┘
+```
+
+- `NavigationSplitView` (iOS/iPadOS/macOS universal).
+- Левая колонка: `List` с `Label(displayName, systemImage: icon)`.
+  Бейдж «● Изменён» если `isCustom == true`.
+- Правая панель: `TextEditor` с моноширинным шрифтом (.monospaced).
+- Bottom bar: статус + кнопка «Сбросить к стандартному».
+- Автосохранение через debounce 1 сек после последнего нажатия клавиши.
+
+### Интеграция с AI-модулем
+
+`Classifier` / `Summarizer` / etc. — вместо хардкода промпта:
+```swift
+// Было (ClassifyV1.swift):
+let systemPrompt = "Ты — ассистент почты..."
+
+// Стало:
+let systemPrompt = try await promptStore.load("classify")
+```
+
+`PromptStore` инжектится в каждый AI-сервис через init.
+При отсутствии PromptStore (backward compat) — fallback на bundled.
+
 ## Cost estimation (per 100 писем)
 
 | Фича | Токенов в | Токенов из | Cost (DeepSeek) |
 |---|---|---|---|
+| P: Prompt Editor | 0 | 0 | $0 (UI only) |
 | A: Summary | ~800 | ~150 | $0.001 |
 | B: Quick Reply | ~400 | ~200 | $0.001 |
 | C: Snippet | ~200 | ~30 | $0.0003 |
