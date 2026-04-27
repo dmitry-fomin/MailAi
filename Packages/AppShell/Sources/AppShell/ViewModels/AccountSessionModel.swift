@@ -206,6 +206,7 @@ public final class AccountSessionModel: ObservableObject {
         case archive
         case toggleRead
         case toggleFlag
+        case moveToMailbox(Mailbox.ID)
     }
 
     /// Выполняет действие над текущим открытым письмом (`selectedMessageID`).
@@ -240,6 +241,11 @@ public final class AccountSessionModel: ObservableObject {
                 updateFlags(messageID: messageID) { flags in
                     if desired { flags.insert(.flagged) } else { flags.remove(.flagged) }
                 }
+            case .moveToMailbox(let targetID):
+                try await actions.moveToMailbox(messageID: messageID, targetMailboxID: targetID)
+                removeFromList(messageID: messageID)
+                openBody = nil
+                bodyTask?.cancel()
             }
         } catch let err as MailError {
             lastError = err

@@ -10,10 +10,22 @@ import Core
 public struct MessageRowView: View {
     public let message: Message
     public let now: Date
+    /// Список папок, отображаемых в контекстном меню «Переместить в…».
+    /// Пустой массив по умолчанию — меню не показывается.
+    public var moveTargets: [Mailbox]
+    /// Callback, вызываемый при выборе целевой папки в контекстном меню.
+    public var onMove: ((Mailbox.ID) -> Void)?
 
-    public init(message: Message, now: Date = Date()) {
+    public init(
+        message: Message,
+        now: Date = Date(),
+        moveTargets: [Mailbox] = [],
+        onMove: ((Mailbox.ID) -> Void)? = nil
+    ) {
         self.message = message
         self.now = now
+        self.moveTargets = moveTargets
+        self.onMove = onMove
     }
 
     public var body: some View {
@@ -64,6 +76,15 @@ public struct MessageRowView: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
+        .contextMenu {
+            if !moveTargets.isEmpty {
+                Menu("Переместить в…") {
+                    ForEach(moveTargets) { mailbox in
+                        Button(mailbox.name) { onMove?(mailbox.id) }
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Derived

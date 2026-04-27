@@ -84,6 +84,11 @@ private enum SessionCommand: Sendable {
         mailbox: String,
         CheckedContinuation<Void, any Error>
     )
+    case search(
+        mailbox: String,
+        criteria: String,
+        CheckedContinuation<[UInt32], any Error>
+    )
 }
 
 /// Аргументы IMAP APPEND-команды (вынесены в struct, чтобы не плодить
@@ -329,6 +334,15 @@ public actor IMAPSession {
         }
     }
 
+    /// UID SEARCH <criteria> в указанном mailbox.
+    /// Выполняет SELECT, затем UID SEARCH; возвращает список UID.
+    /// Ответ вида `* SEARCH uid1 uid2 ...` парсится вручную.
+    public func searchMessages(in mailboxPath: String, criteria: String) async throws -> [UInt32] {
+        try await enqueueCommand { continuation in
+            .search(mailbox: mailboxPath, criteria: criteria, continuation)
+        }
+    }
+
     /// Явный LOGOUT через command queue (в отличие от `stop()` который
     /// отменяет Task). Полезен для graceful shutdown: LOGOUT отправится
     /// после завершения всех предыдущих команд.
@@ -429,6 +443,10 @@ public actor IMAPSession {
                     date: args.date,
                     literal: args.literal
                 )
+            }
+        case .search(let mailbox, let criteria, let cont):
+            await bridge(cont) {
+                try await connection.uidSearch(mailbox: mailbox, criteria: criteria)
             }
         }
     }

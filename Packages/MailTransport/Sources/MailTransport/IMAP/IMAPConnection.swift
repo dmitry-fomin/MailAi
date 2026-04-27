@@ -230,6 +230,23 @@ public final class IMAPConnection: @unchecked Sendable {
         try await iterator.next()
     }
 
+    /// UID SEARCH в указанном mailbox.
+    /// Выполняет SELECT, затем `UID SEARCH <criteria>` и возвращает список UID.
+    /// Парсит строку вида `* SEARCH uid1 uid2 ...`.
+    public func uidSearch(mailbox: String, criteria: String) async throws -> [UInt32] {
+        _ = try await select(mailbox)
+        let result = try await execute("UID SEARCH \(criteria)")
+        try checkOK(result.tagged)
+
+        // Ищем untagged-строку вида "SEARCH uid1 uid2 ..."
+        for u in result.untagged {
+            let parts = u.raw.split(separator: " ", omittingEmptySubsequences: true)
+            guard let first = parts.first, first.uppercased() == "SEARCH" else { continue }
+            return parts.dropFirst().compactMap { UInt32($0) }
+        }
+        return []
+    }
+
     // MARK: - Helpers
 
     private func checkOK(_ tagged: IMAPTaggedResponse) throws {

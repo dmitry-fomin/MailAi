@@ -10,4 +10,5 @@ public protocol MailActionsProvider: Sendable {
     func archive(messageID: Message.ID) async throws
     func setRead(_ read: Bool, messageID: Message.ID) async throws
     func setFlagged(_ flagged: Bool, messageID: Message.ID) async throws
+    func moveToMailbox(messageID: Message.ID, targetMailboxID: Mailbox.ID) async throws
 }

@@ -342,8 +342,12 @@ public struct AccountWindowScene: View {
     /// AI-5: строка списка с .draggable() для drag-to-rule.
     @ViewBuilder
     private func draggableRow(for message: Message) -> some View {
-        MessageRowView(message: message)
-            .draggable(DraggableMessage(message: message))
+        MessageRowView(
+            message: message,
+            moveTargets: session.mailboxes.filter { $0.id != session.selectedMailboxID },
+            onMove: { targetID in Task { await session.perform(.moveToMailbox(targetID)) } }
+        )
+        .draggable(DraggableMessage(message: message))
     }
 
     // MARK: - Reader

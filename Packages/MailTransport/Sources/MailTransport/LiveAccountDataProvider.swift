@@ -396,6 +396,29 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
         try await setFlag(.flagged, on: messageID, enabled: flagged)
     }
 
+    /// Перемещает письмо в произвольную папку по `Mailbox.ID`.
+    /// Использует UID MOVE, fallback — COPY+STORE+EXPUNGE для серверов без MOVE.
+    /// После успеха снимает метаданные исходной папки из store.
+    public func moveToMailbox(messageID: Message.ID, targetMailboxID: Mailbox.ID) async throws {
+        guard let record = try await store.message(id: messageID) else {
+            throw MailError.messageNotFound(messageID)
+        }
+        let allMailboxes = try await mailboxes()
+        guard let destination = allMailboxes.first(where: { $0.id == targetMailboxID }) else {
+            throw MailError.mailboxNotFound(targetMailboxID)
+        }
+        let sess = try await ensureSession()
+        _ = try await sess.select(record.mailboxID.rawValue)
+        let caps = try await sess.capability()
+        let hasMove = caps.contains { $0.uppercased() == "MOVE" }
+        if hasMove {
+            try await sess.uidMove(uid: record.uid, to: destination.path)
+        } else {
+            try await sess.uidMoveFallback(uid: record.uid, to: destination.path)
+        }
+        try await store.delete(messageIDs: [messageID])
+    }
+
     // MARK: - AI-7: серверная синхронизация Important/Unimportant
 
     /// Кэш состояния серверных папок: были ли они уже созданы/проверены в
