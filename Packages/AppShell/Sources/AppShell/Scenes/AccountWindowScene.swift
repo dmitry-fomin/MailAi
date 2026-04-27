@@ -345,7 +345,8 @@ public struct AccountWindowScene: View {
                     forward: {},
                     archive: { Task { await session.perform(.archive) } },
                     delete: { Task { await session.perform(.delete) } },
-                    flag: { Task { await session.perform(.toggleFlag) } }
+                    flag: { Task { await session.perform(.toggleFlag) } },
+                    toggleRead: { Task { await session.perform(.toggleRead) } }
                 ))
                 Divider()
                 ReaderBodyView(
@@ -422,8 +423,9 @@ public struct AccountWindowScene: View {
             Button("Focus List") { focus = .list }
                 .keyboardShortcut("2", modifiers: [.command])
             Button("Refresh") {
-                // TODO(A6/B-phase): noop. Интеграция с провайдером будет
-                // сделана в фазе B (refetch mailboxes + messages).
+                if let mailboxID = session.selectedMailboxID {
+                    Task { await session.loadMessages(for: mailboxID) }
+                }
             }
             .keyboardShortcut("r", modifiers: [.command])
         }

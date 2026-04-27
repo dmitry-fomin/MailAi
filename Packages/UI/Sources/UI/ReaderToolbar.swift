@@ -11,6 +11,7 @@ public struct ReaderToolbar: View {
         public var archive: () -> Void
         public var delete: () -> Void
         public var flag: () -> Void
+        public var toggleRead: () -> Void
 
         public init(
             reply: @escaping () -> Void = {},
@@ -18,7 +19,8 @@ public struct ReaderToolbar: View {
             forward: @escaping () -> Void = {},
             archive: @escaping () -> Void = {},
             delete: @escaping () -> Void = {},
-            flag: @escaping () -> Void = {}
+            flag: @escaping () -> Void = {},
+            toggleRead: @escaping () -> Void = {}
         ) {
             self.reply = reply
             self.replyAll = replyAll
@@ -26,6 +28,7 @@ public struct ReaderToolbar: View {
             self.archive = archive
             self.delete = delete
             self.flag = flag
+            self.toggleRead = toggleRead
         }
     }
 
@@ -44,6 +47,7 @@ public struct ReaderToolbar: View {
             toolButton("archivebox", "Архив", action: actions.archive)
             toolButton("trash", "Удалить", action: actions.delete)
             toolButton("flag", "Флаг", action: actions.flag)
+            toolButton("envelope.badge", "Прочитано/Непрочитано", action: actions.toggleRead)
             Spacer()
             // AI-pack v1: зарезервированный слот под sync-иконку.
             // В v1 disabled и без действия; в AI-pack получит биндинг
