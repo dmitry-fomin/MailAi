@@ -33,31 +33,34 @@
 Источник: `bd list --status=open`. Ветка `feature/imap-transport` уже слита; main-ветка упразднена.
 
 ### AI-pack v1 (продолжение AI-1/2)
-- **MailAi-8no** AI-3: `ClassificationQueue` (батчинг, ретраи, persistence в `classification_log`). *Ready.*
-- **MailAi-8te** AI-4: `RuleEngine` CRUD + сериализация в system prompt.
-- **MailAi-z96** AI-5: живые «Отфильтрованные» папки, прогресс-бар, drag-to-rule.
-- **MailAi-new** AI-6: Settings → AI-pack (ключ, модель, правила).
-- **MailAi-skb** AI-7: (опц.) серверная синхронизация «Отфильтрованных».
-- **MailAi-4zm** AI-8: Retention GC + privacy-тесты.
+- [x] **MailAi-8no** AI-3: `ClassificationQueue` (батчинг, ретраи, persistence в `classification_log`).
+- [x] **MailAi-8te** AI-4: `RuleEngine` CRUD + сериализация в system prompt.
+- [x] **MailAi-z96** AI-5: живые «Отфильтрованные» папки, `ClassificationProgressBar`, drag-to-rule (`RuleProposalSheet`).
+- [x] **MailAi-new** AI-6: Settings → AI-pack (ключ через Keychain, модель из `OpenRouterModelCatalog`, CRUD правил, `aiPackEnabled`/`serverSyncEnabled`).
+- [x] **MailAi-skb** AI-7: серверная синхронизация Important/Unimportant (`IMAPServerFolderSync`, `LiveAccountDataProvider.ensureServerFolders` + `moveAfterClassification`, `ClassificationCoordinator.postClassifyHook`).
+- [x] **MailAi-4zm** AI-8: Retention GC + privacy-тесты.
 
 ### Пул IMAP-сессий
-- **MailAi-qrz** Pool-1: `IMAPSession` actor с command queue. *Ready.*
-- **MailAi-211** Pool-2: интеграция в `LiveAccountDataProvider`.
-- **MailAi-y23** Pool-3: IDLE-цикл для активной папки.
-- **MailAi-md4** Pool-4: smoke session pool + IDLE.
+- [x] **MailAi-qrz** Pool-1: `IMAPSession` actor с command queue.
+- [x] **MailAi-211** Pool-2: интеграция в `LiveAccountDataProvider`.
+- [x] **MailAi-y23** Pool-3: IDLE-цикл для активной папки (`IMAPIdleController`, 29-мин таймер, `withTaskGroup`-гонка). Известный дефект — issue **Pool-3-fix** (зависание `stop()` на простаивающем канале).
+- [x] **MailAi-md4** Pool-4: `SessionPoolIDLESmoke` (fake IMAP, EXISTS-push без ручного refresh, cancel-инвариант).
 
 ### SMTP / Compose
-- **MailAi-1qb** SMTP-1: SwiftNIO-клиент (EHLO/STARTTLS/AUTH/MAIL/RCPT/DATA). *Ready.*
-- **MailAi-2u7** SMTP-2: MIME-composer (RFC 2047).
-- **MailAi-h5m** SMTP-3: `SendProvider` + `LiveSendProvider` + Keychain SMTP.
-- **MailAi-91d** SMTP-4: черновики через IMAP APPEND.
-- **MailAi-tq4** SMTP-5: `ComposeScene`.
-- **MailAi-3e0** SMTP-6: smoke SMTP + Compose end-to-end.
+- [x] **MailAi-1qb** SMTP-1: SwiftNIO-клиент (EHLO/STARTTLS/AUTH/MAIL/RCPT/DATA).
+- [x] **MailAi-2u7** SMTP-2: MIME-composer (RFC 2047).
+- [x] **MailAi-h5m** SMTP-3: `SendProvider` + `LiveSendProvider` (actor) + `Kind.smtpPassword` с fallback на IMAP-пароль; SMTP-поля в `Account`.
+- [x] **MailAi-91d** SMTP-4: черновики через IMAP APPEND.
+- [x] **MailAi-tq4** SMTP-5: `ComposeScene` + `ComposeViewModel` + `ComposeWindowValue`; `⌘N` = новое письмо, `⌘⇧N` = новый аккаунт.
+- [x] **MailAi-3e0** SMTP-6: `SMTPEndToEndSmoke` (FakeSMTPServer + FakeIMAPServer на NIO; happy / RCPT 550 / APPEND-fail).
 
 ### StatusBar / Notifications
-- **MailAi-faa** Status-1: `MenuBarExtra` со счётчиком и меню аккаунтов. *Ready.*
-- **MailAi-jgv** Status-2: `UNUserNotificationCenter` (privacy-aware).
-- **MailAi-v7r** Status-3: smoke StatusBar/Notifications.
+- [x] **MailAi-faa** Status-1: `MenuBarExtra` со счётчиком и меню аккаунтов.
+- [x] **MailAi-jgv** Status-2: `UNUserNotificationCenter` (privacy-aware).
+- [x] **MailAi-v7r** Status-3: `StatusNotificationsSmoke` (контракт `badgeText` + чистая render-функция уведомлений без UN-фреймворка).
+
+### Открытые follow-up
+- **Pool-3-fix**: `IMAPIdleController.stop()` зависает на простаивающем канале (NIOAsyncChannel iterator не реагирует на `Task.cancel`).
 
 ## Как собрать/посмотреть
 

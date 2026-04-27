@@ -117,3 +117,75 @@ MIME через `MIMEComposer`, APPEND'ит с флагом `\Draft`.
 Тело письма живёт в памяти только на время вызова — после `saveDraft`
 строка `composed` выходит из скоупа, ни в кеше, ни в БД, ни в логах
 не сохраняется. Черновики хранятся **только** на сервере IMAP.
+
+## Pool-3 — IDLE-цикл активной папки
+
+`IMAPIdleController` (actor) — отдельное соединение под `IDLE` (RFC 2177),
+не пересекающееся с командным каналом `IMAPSession`. Жизненный цикл:
+
+1. `start()` — connect + LOGIN, переход в `.connecting → .idle/.notSelected`.
+2. `setMailbox(_:)` — `SELECT` + `IDLE`, выдача `IMAPIdleEvent` (EXISTS/EXPUNGE)
+   через `events: AsyncStream<IMAPIdleEvent>`.
+3. `withTaskGroup`-гонка трёх веток в `backgroundTask`: input команд из
+   `IdleCommandQueue`, push-уведомления сервера, таймер 29 минут (RFC 2177
+   рекомендует ре-IDLE до 29 мин). По таймауту — `DONE` + `IDLE` на той же
+   папке, без переключения.
+4. `stop()` / `Task.cancel()` — `DONE` + `LOGOUT` + close.
+
+Реконнекта внутри нет: при обрыве — `.stopped(error)`, верхний уровень
+пересоздаёт контроллер (граница «жив/мёртв»). После EXISTS-пуша потребитель
+сам вызывает `headers(refresh: true)` — контроллер не знает о метаданных.
+
+**Известный дефект** (issue Pool-3-fix): `stop()` может зависнуть на
+полностью простаивающем канале, потому что `NIOAsyncChannel.inboundStream`
+итератор не реагирует на `Task.cancel()` без серверного фрейма.
+Прод-обходной путь — закрытие endpoint снаружи (см. `SessionPoolIDLESmoke`
+кейс «обрыв канала»).
+
+## Pool-4 — `SessionPoolIDLESmoke`
+
+Executable-таргет (`Scripts/smoke.sh`), без XCTest. Поднимает fake IMAP-сервер
+на NIO и проверяет:
+
+- После `SELECT` + `IDLE` push-уведомление `* N EXISTS` доезжает до
+  `IMAPIdleController.events` без ручного refresh.
+- Cancel-инвариант: при принудительном закрытии канала контроллер переходит
+  в `.stopped` без deadlock (purpose-built проверка для регрессии Pool-3-fix).
+
+## SMTP-3 — `SendProvider`
+
+- **Протокол `SendProvider` в `Core`**: `func send(envelope: Envelope, body: MIMEBody) async throws`.
+- **`LiveSendProvider` (actor) в `MailTransport`**: открывает SMTP-сессию через
+  `SMTPConnection.withOpen` на каждый вызов, шлёт `MAIL FROM/RCPT TO/DATA`,
+  затем `QUIT`. Тело (`MIMEBody.raw`) живёт только в стеке вызова.
+- **Endpoint**: берётся из `Account.smtpHost/smtpPort/smtpSecurity`. Если
+  любое поле пустое — `MailError.unsupported` (отправка запрещена). Маппинг
+  `Account.Security → SMTPEndpoint.Security`: `tls`/`startTLS`/`none → plain`.
+- **Пароль**: сначала `SecretsStore.smtpPassword(forAccount:)`; если пуст —
+  fallback на `password(forAccount:)` (IMAP-пароль). Решение принимает
+  именно provider, не store. См. [Secrets.md](Secrets.md).
+
+## SMTP-5 — Compose-интеграция
+
+`AccountDataProviderFactory` (в AppShell) предоставляет:
+
+- `makeSendProvider(for:secrets:) -> any SendProvider` — возвращает
+  `LiveSendProvider` для live-режима, моки для mock-режима.
+- `makeDraftSaver(for:secrets:) -> (DraftEnvelope, String) async throws -> Void` —
+  замыкание поверх `LiveAccountDataProvider.saveDraft`.
+
+Эти фабрики используются `ComposeViewModel`. UI-сцена — `ComposeScene`
+(см. [AppShell.md](AppShell.md)).
+
+## SMTP-6 — `SMTPEndToEndSmoke`
+
+Executable-таргет, два fake-сервера на NIO в одном процессе:
+`FakeSMTPServer` + `FakeIMAPServer`. Покрывает:
+
+- happy path: `MAIL/RCPT/DATA` принимаются, затем `APPEND` черновика в Drafts;
+- ошибка `RCPT 550` от SMTP — `LiveSendProvider` возвращает ошибку, `APPEND`
+  не вызывается;
+- ошибка `APPEND` от IMAP — `saveDraft` бросает, текст письма не остаётся
+  в памяти после возврата (проверяется через scope-инвариант).
+
+Smoke не использует XCTest — гейтится `Scripts/smoke.sh`.

@@ -117,6 +117,31 @@ NotificationManager.shared.removeDeliveredNotifications(for: "acc-123")
 - **От**: `Core`, `UserNotifications`.
 - **Кто зависит**: `AppShell` (интеграция), `MailAiApp` (запуск).
 
+## Status-3 — smoke без UNUserNotificationCenter
+
+`StatusNotificationsSmoke` (executable-таргет в `Packages/UI`) проверяет
+payload-логику без обращения к UN-фреймворку. Чтобы это было возможно,
+формирование `(title, body)` вынесено в чистую render-функцию:
+
+```swift
+static func renderNotification(
+    accountName: String,
+    subject: String?,
+    sender: String?,
+    classification: FakeClassification  // .important / .notImportant / .suppressed
+) -> (title: String, body: String)?
+```
+
+Контракт:
+
+- `.important` → `(title: sender ?? "Новое важное письмо", body: subject ?? …)`.
+- `.notImportant` → `(title: "MailAi", body: "Новое письмо в \(accountName)")`.
+- `.suppressed` → `nil` (уведомление полностью гасится AI-фильтром).
+
+Smoke прогоняет утечки: subject/sender не должны попадать в generic-payload.
+Сигнатура render намеренно **не принимает** body/snippet — это статическая
+гарантия privacy-инварианта.
+
 ## Запрещено
 
 - Включать содержимое письма (body/snippet/preview) в текст уведомления.

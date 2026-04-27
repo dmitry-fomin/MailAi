@@ -56,6 +56,20 @@ AccountRegistry.totalUnreadCount
 - **MailAiApp** → `UI` (StatusBarBadgeLabel, StatusBarMenuContent)
 - **AccountRegistry** → Combine (каскад objectWillChange)
 
+## Контракт `StatusBarBadgeLabel.badgeText` (Status-3)
+
+Чистая функция от `unreadCount: Int → String`:
+
+| `unreadCount` | `badgeText` |
+|---|---|
+| `≤ 0` | `""` (бейдж скрыт) |
+| `1…99` | `"\(count)"` |
+| `≥ 100` | `"99+"` |
+
+Логика покрыта executable-смоком `StatusNotificationsSmoke` (`Packages/UI`) —
+он не зависит от XCTest и не открывает AppKit. См. `docs/Notifications.md`
+для render-функции уведомлений, проверяемой тем же таргетом.
+
 ## Запрещено
 
 - Рендерить в иконку содержимое писем / тему.
