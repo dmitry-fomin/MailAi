@@ -41,7 +41,7 @@ public struct StatusBarBadgeLabel: View {
             Image(systemName: "envelope")
             if unreadCount > 0 {
                 Text(badgeText)
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .font(.caption2.weight(.bold))
                     .monospacedDigit()
                     .foregroundStyle(.white)
                     .padding(.horizontal, 4)

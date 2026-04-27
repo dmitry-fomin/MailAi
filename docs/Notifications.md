@@ -1,39 +1,123 @@
 # Модуль: Notifications
 
-<!-- Статус: план модуля. Код ещё не написан. -->
-
 ## Назначение
 
-Уведомления о новых письмах: системные (`UserNotifications`) плюс внутриприложенческие (toast/bezel). Интеграция с AI-оценкой важности — неважные рассылки не шумят.
+Системные уведомления о новых письмах (`UNUserNotificationCenter`) с
+приватностью по умолчанию. Интеграция с AI-оценкой важности — неважные
+рассылки не раскрывают данные отправителя/темы.
 
 ## Ключевые сущности
 
-- `NotificationCenter` (доменный, не путать с `Foundation.NotificationCenter`) — актёр.
-- `NotificationPolicy` — правила показа (только важные / все / никакие / по времени).
-- `NotificationPresenter` — обёртка над `UNUserNotificationCenter`.
+- `NotificationManager` — singleton-менеджер уведомлений (`UI`-модуль).
+- `NotificationDelegate` — делегат для отображения баннеров в foreground.
 
-## Бизнес-логика
+## Модель приватности
 
-- По умолчанию: уведомления показываются **только** для писем с `Importance == .high` по AI-оценке.
-- Правила настраиваются на аккаунт (разные политики для разных ящиков).
-- Текст уведомления — тема + имя отправителя. **Тело письма в уведомление не попадает** (совместимо с требованием приватности).
-- Нажатие на уведомление — открывает окно соответствующего аккаунта и фокусирует письмо.
+| Состояние письма | Заголовок | Тело уведомления | Что видно |
+|---|---|---|---|
+| AI не классифицировал (`isImportant = false`) | MailAi | «Новое письмо в \<аккаунт\>» | Только наличие нового письма |
+| AI одобрил как важное (`isImportant = true`) | Sender (имя/адрес) | Subject (тема) | Отправитель + тема |
+| **Любое** | — | — | **Тело/сниппет НИКОГДА не показываются** |
+
+### Почему так
+
+По умолчанию приложение не знает, является ли письмо важным (спам,
+рассылка, маркетинг). Пока AI-pack не классифицировал письмо, мы не
+раскрываем отправителя и тему — пользователь видит только generic
+уведомление. После AI-одобрения показываем полную информацию.
+
+## Когда запрашивается разрешение
+
+Один раз — при добавлении **первого** аккаунта:
+
+- `WelcomeOrPickerScene`: кнопка «Продолжить с демо-данными».
+- `OnboardingWindow`: завершение онбординга живого аккаунта.
+
+Повторные вызовы `requestPermission()` безопасны — система запоминает
+выбор пользователя.
+
+## Foreground-уведомления
+
+macOS по умолчанию не показывает баннеры, если приложение активно.
+`NotificationDelegate` реализует `willPresent` и возвращает `[.banner, .sound]`,
+чтобы уведомления отображались всегда.
+
+Делегат устанавливается через `AppDelegate` → `NotificationManager.setupDelegate()`
+в `applicationDidFinishLaunching`.
 
 ## API
 
 ```swift
-public protocol NotificationService: Sendable {
-    func requestAuthorization() async -> Bool
-    func notify(newMessages: [Message], in: Account.ID) async
-    func updatePolicy(_ policy: NotificationPolicy, for: Account.ID) async
+// UI-модуль, Packages/UI/Sources/UI/NotificationManager.swift
+
+public final class NotificationManager: @unchecked Sendable {
+    public static let shared = NotificationManager()
+
+    /// Установить делегат (вызывается при запуске приложения).
+    public func setupDelegate()
+
+    /// Запросить разрешение на уведомления (один раз).
+    public func requestPermission() async -> Bool
+
+    /// Показать уведомление о новом письме.
+    public func notify(
+        accountName: String,
+        accountID: String,
+        subject: String? = nil,
+        sender: String? = nil,
+        isImportant: Bool = false
+    )
+
+    /// Удалить доставленные уведомления для аккаунта.
+    public func removeDeliveredNotifications(for accountID: String)
 }
+```
+
+### Параметры `notify`
+
+- `accountName` — отображаемое имя аккаунта (email или displayName).
+- `accountID` — уникальный идентификатор аккаунта. Используется для
+  группировки уведомлений (`threadIdentifier`) и их удаления.
+- `subject` — тема письма (видна только при `isImportant == true`).
+- `sender` — имя/адрес отправителя (видно только при `isImportant == true`).
+- `isImportant` — признак AI-одобрения. `false` = generic уведомление.
+
+### Параметры `removeDeliveredNotifications`
+
+- `accountID` — идентификатор аккаунта, ранее переданный в `notify(accountID:…)`.
+
+## Пример использования
+
+```swift
+// Новое письмо, AI ещё не классифицировал:
+NotificationManager.shared.notify(
+    accountName: "user@gmail.com",
+    accountID: "acc-123"
+)
+// → Заголовок: "MailAi"
+// → Тело: "Новое письмо в user@gmail.com"
+
+// AI одобрил как важное:
+NotificationManager.shared.notify(
+    accountName: "user@gmail.com",
+    accountID: "acc-123",
+    subject: "Срочно: отчёт за Q4",
+    sender: "Директор Иванова",
+    isImportant: true
+)
+// → Заголовок: "Директор Иванова"
+// → Тело: "Срочно: отчёт за Q4"
+
+// Очистить уведомления при переключении аккаунта:
+NotificationManager.shared.removeDeliveredNotifications(for: "acc-123")
 ```
 
 ## Зависимости
 
 - **От**: `Core`, `UserNotifications`.
-- **Кто зависит**: `AppShell`, `StatusBar`.
+- **Кто зависит**: `AppShell` (интеграция), `MailAiApp` (запуск).
 
 ## Запрещено
 
-- Включать содержимое письма в текст уведомления.
+- Включать содержимое письма (body/snippet/preview) в текст уведомления.
+- Показывать subject/sender для неклассифицированных или неважных писем.

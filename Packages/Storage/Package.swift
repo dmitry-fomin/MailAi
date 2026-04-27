@@ -31,6 +31,19 @@ let package = Package(
                 .product(name: "GRDB", package: "GRDB.swift")
             ],
             path: "Tests/StorageTests"
+        ),
+        .executableTarget(
+            name: "RetentionGCSmoke",
+            dependencies: [
+                "Storage",
+                "Core",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
+            path: "Sources/RetentionGCSmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
         )
     ]
 )

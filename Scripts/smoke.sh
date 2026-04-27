@@ -51,6 +51,18 @@ echo "▶ run Search smoke (Search-3: FTS5 + QueryParser)"
 echo "▶ run Classifier smoke (AI-2: Classifier actor + ClassifyV1 prompt)"
 (cd Packages/AI && swift run ClassifierSmoke)
 
+echo "▶ run RuleEngine smoke (AI-4: RuleEngine CRUD + observe)"
+(cd Packages/AI && swift run RuleEngineSmoke)
+
+echo "▶ run Privacy smoke (AI-8: snippet/hash privacy invariants)"
+(cd Packages/AI && swift run PrivacySmoke)
+
+echo "▶ run RetentionGC smoke (AI-8: classification_log retention)"
+(cd Packages/Storage && swift run RetentionGCSmoke)
+
+echo "▶ run MIME smoke (SMTP-2: MIMEComposer RFC 5322/2047/QP)"
+(cd Packages/MailTransport && swift run MIMESmoke)
+
 echo "▶ render screenshots (A10: Light/Dark → Scripts/artifacts/screenshots/)"
 (cd Packages/AppShell && swift run ScreenshotSmoke)
 

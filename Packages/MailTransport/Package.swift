@@ -9,7 +9,8 @@ let package = Package(
         .executable(name: "IMAPSmokeCLI", targets: ["IMAPSmokeCLI"]),
         .executable(name: "IMAPPerfSmoke", targets: ["IMAPPerfSmoke"]),
         .executable(name: "IMAPSessionSmoke", targets: ["IMAPSessionSmoke"]),
-        .executable(name: "SMTPSmoke", targets: ["SMTPSmoke"])
+        .executable(name: "SMTPSmoke", targets: ["SMTPSmoke"]),
+        .executable(name: "MIMESmoke", targets: ["MIMESmoke"])
     ],
     dependencies: [
         .package(path: "../Core"),
@@ -87,6 +88,17 @@ let package = Package(
                 .product(name: "NIOSSL", package: "swift-nio-ssl")
             ],
             path: "Sources/SMTPSmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
+        ),
+        .executableTarget(
+            name: "MIMESmoke",
+            dependencies: [
+                "MailTransport"
+            ],
+            path: "Sources/MIMESmoke",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableUpcomingFeature("ExistentialAny")

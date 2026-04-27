@@ -16,6 +16,10 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
     public let secrets: (any SecretsStore)?
     public let endpoint: IMAPEndpoint
 
+    /// Long-lived IMAP-сессия. Создаётся лениво при первом обращении,
+    /// переиспользуется для всех последующих операций.
+    private var session: IMAPSession?
+
     public init(
         account: Account,
         store: any MetadataStore = InMemoryMetadataStore(),
@@ -32,10 +36,40 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
         )
     }
 
+    deinit {
+        // Сессия — actor, поэтому нужно захватить в Task для stop().
+        // deinit не может быть async, поэтому запускаем fire-and-forget.
+        // IMAPSession.stop() безопасен при повторном вызове.
+        let session = self.session
+        Task { [session] in
+            await session?.stop()
+        }
+    }
+
+    /// Лениво создаёт и возвращает IMAP-сессию. При первом вызове
+    /// открывает TCP+TLS соединение и выполняет LOGIN.
+    private func ensureSession() async throws -> IMAPSession {
+        if let session { return session }
+        guard let secrets else {
+            throw MailError.unsupported("LiveAccountDataProvider сконструирован без SecretsStore — нельзя выполнить live-операцию.")
+        }
+        guard let password = try await secrets.password(forAccount: account.id) else {
+            throw MailError.keychain(.unknown)
+        }
+        let newSession = IMAPSession(
+            endpoint: endpoint,
+            username: account.username,
+            password: password
+        )
+        try await newSession.start()
+        self.session = newSession
+        return newSession
+    }
+
     /// Открывает временную IMAP-сессию (LOGIN → body → LOGOUT). Пароль берётся
     /// из `SecretsStore`. Закрывается автоматически по выходу из замыкания.
-    /// Используется каждой публичной операцией провайдера до появления
-    /// session-scoped connection actor'а.
+    /// Используется для streaming-операций (streamBody), которые не вписываются
+    /// в модель command-loop IMAPSession.
     func withSession<Result: Sendable>(
         _ body: @Sendable (IMAPConnection) async throws -> Result
     ) async throws -> Result {
@@ -56,9 +90,8 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
     // MARK: - AccountDataProvider
 
     public func mailboxes() async throws -> [Mailbox] {
-        let entries = try await withSession { conn in
-            try await conn.list()
-        }
+        let sess = try await ensureSession()
+        let entries = try await sess.list()
         let accountID = account.id
         let mailboxes = entries.map { entry -> Mailbox in
             let role = Self.mapRole(flags: entry.flags, path: entry.path)
@@ -145,18 +178,16 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
                     // SELECT → UID FETCH → upsert. После этого читаем из
                     // store уже свежую страницу.
                     let limit = UInt32(max(page.limit, 1))
-                    try await withSession { conn in
-                        let select = try await conn.select(mailbox.rawValue)
-                        guard let uidNext = select.uidNext, uidNext > 1 else {
-                            return  // пустая папка
-                        }
+                    let sess = try await ensureSession()
+                    let select = try await sess.select(mailbox.rawValue)
+                    if let uidNext = select.uidNext, uidNext > 1 {
                         let upper = uidNext - 1
                         let lower = upper >= limit ? upper - (limit - 1) : 1
                         let range = IMAPUIDRange(lower: lower, upper: upper)
-                        _ = try await self.syncHeaders(
+                        _ = try await self.syncHeadersViaSession(
                             mailbox: mailbox,
                             uidRange: range,
-                            using: conn
+                            session: sess
                         )
                     }
 
@@ -186,14 +217,14 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
                     guard let record = try await store.message(id: message) else {
                         throw MailError.messageNotFound(message)
                     }
-                    try await withSession { conn in
-                        // SELECT нужной папки (IMAP требует активный mailbox
-                        // перед UID FETCH).
-                        _ = try await conn.select(record.mailboxID.rawValue)
-                        for try await chunk in conn.streamBody(uid: record.uid) {
-                            if Task.isCancelled { return }
-                            continuation.yield(chunk)
-                        }
+                    let sess = try await ensureSession()
+                    _ = try await sess.select(record.mailboxID.rawValue)
+                    // fetchBody собирает все байты в один массив, затем
+                    // отдаём их одним чанком. Для больших вложений
+                    // предпочтительнее использовать withSession + streamBody.
+                    let bytes = try await sess.fetchBody(uid: record.uid)
+                    if !bytes.isEmpty {
+                        continuation.yield(ByteChunk(bytes: bytes))
                     }
                     continuation.finish()
                 } catch is CancellationError {
@@ -254,6 +285,35 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
         )
     }
 
+    /// Выполняет `UID FETCH` по указанному диапазону через IMAPSession,
+    /// маппит каждый ответ в `Message` и батчем upsert-ит в `store`.
+    func syncHeadersViaSession(
+        mailbox: Mailbox.ID,
+        uidRange: IMAPUIDRange,
+        session: IMAPSession
+    ) async throws -> SyncHeadersResult {
+        let (fetches, parseErrors) = try await session.uidFetchHeaders(range: uidRange)
+        var mapped: [Message] = []
+        mapped.reserveCapacity(fetches.count)
+        var skipped = 0
+        for fetch in fetches {
+            if let msg = IMAPFetchMapper.toMessage(fetch, accountID: account.id, mailboxID: mailbox) {
+                mapped.append(msg)
+            } else {
+                skipped += 1
+            }
+        }
+        if !mapped.isEmpty {
+            try await store.upsert(mapped)
+        }
+        return SyncHeadersResult(
+            fetched: fetches.count,
+            upserted: mapped.count,
+            parseErrors: parseErrors,
+            skippedWithoutUID: skipped
+        )
+    }
+
     // MARK: - Mail-2: действия над письмами
 
     /// Удаляет письмо на сервере: SELECT mailbox → UID STORE +\Deleted → EXPUNGE.
@@ -262,11 +322,10 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
         guard let record = try await store.message(id: messageID) else {
             throw MailError.messageNotFound(messageID)
         }
-        try await withSession { conn in
-            _ = try await conn.select(record.mailboxID.rawValue)
-            try await conn.uidStore(uid: record.uid, operation: .add, flags: [.deleted])
-            try await conn.expunge()
-        }
+        let sess = try await ensureSession()
+        _ = try await sess.select(record.mailboxID.rawValue)
+        _ = try await sess.uidStore(uid: record.uid, operation: .add, flags: [.deleted])
+        try await sess.expunge()
         try await store.delete(messageIDs: [messageID])
     }
 
@@ -283,19 +342,18 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
         guard let record = try await store.message(id: messageID) else {
             throw MailError.messageNotFound(messageID)
         }
-        let mailboxes = try await mailboxes()
-        guard let destination = mailboxes.first(where: { $0.role == role }) else {
+        let allMailboxes = try await mailboxes()
+        guard let destination = allMailboxes.first(where: { $0.role == role }) else {
             throw MailError.mailboxNotFound(Mailbox.ID(role.rawValue))
         }
-        try await withSession { conn in
-            _ = try await conn.select(record.mailboxID.rawValue)
-            let caps = try await conn.capability()
-            let hasMove = caps.contains { $0.uppercased() == "MOVE" }
-            if hasMove {
-                try await conn.uidMove(uid: record.uid, to: destination.path)
-            } else {
-                try await conn.uidMoveFallback(uid: record.uid, to: destination.path)
-            }
+        let sess = try await ensureSession()
+        _ = try await sess.select(record.mailboxID.rawValue)
+        let caps = try await sess.capability()
+        let hasMove = caps.contains { $0.uppercased() == "MOVE" }
+        if hasMove {
+            try await sess.uidMove(uid: record.uid, to: destination.path)
+        } else {
+            try await sess.uidMoveFallback(uid: record.uid, to: destination.path)
         }
         // Обновляем метаданные: стираем старую запись, чтобы UI сразу
         // перестроил список исходной папки. Новую версию подтянет
@@ -313,20 +371,19 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
         guard let record = try await store.message(id: messageID) else {
             throw MailError.messageNotFound(messageID)
         }
-        try await withSession { conn in
-            _ = try await conn.select(record.mailboxID.rawValue)
-            try await conn.uidStore(
-                uid: record.uid,
-                operation: enabled ? .add : .remove,
-                flags: [flag]
-            )
-            // Ресинхронизация одной записи, чтобы UI увидел новые флаги.
-            _ = try await self.syncHeaders(
-                mailbox: record.mailboxID,
-                uidRange: IMAPUIDRange(lower: record.uid, upper: record.uid),
-                using: conn
-            )
-        }
+        let sess = try await ensureSession()
+        _ = try await sess.select(record.mailboxID.rawValue)
+        _ = try await sess.uidStore(
+            uid: record.uid,
+            operation: enabled ? .add : .remove,
+            flags: [flag]
+        )
+        // Ресинхронизация одной записи, чтобы UI увидел новые флаги.
+        _ = try await self.syncHeadersViaSession(
+            mailbox: record.mailboxID,
+            uidRange: IMAPUIDRange(lower: record.uid, upper: record.uid),
+            session: sess
+        )
     }
 
     /// Удобная обёртка для «прочитано / непрочитано».

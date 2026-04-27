@@ -34,6 +34,24 @@ let package = Package(
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableUpcomingFeature("ExistentialAny")
             ]
+        ),
+        .executableTarget(
+            name: "RuleEngineSmoke",
+            dependencies: ["AI", "Core", "Storage"],
+            path: "Sources/RuleEngineSmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
+        ),
+        .executableTarget(
+            name: "PrivacySmoke",
+            dependencies: ["AI", "Core"],
+            path: "Sources/PrivacySmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
         )
     ]
 )

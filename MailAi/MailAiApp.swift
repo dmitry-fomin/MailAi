@@ -5,9 +5,21 @@ import MockData
 import Secrets
 import Storage
 import UI
+import UserNotifications
+
+// MARK: - App Delegate
+
+/// Делегат приложения: настраивает `UNUserNotificationCenter.delegate`
+/// для отображения баннеров в foreground.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NotificationManager.shared.setupDelegate()
+    }
+}
 
 @main
 struct MailAiApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     // C4: секреты — только в Keychain в live, in-memory в mock/dev.
     private static let sharedSecrets: any SecretsStore = {
         let config = AppShellConfig.fromEnvironment()
@@ -118,6 +130,7 @@ private struct WelcomeOrPickerScene: View {
                 onContinueWithMock: {
                     let mock = MockAccountDataProvider()
                     registry.register(mock.account, provider: mock)
+                    requestNotificationPermissionIfNeeded(registry: registry)
                     openWindow(id: "account", value: mock.account.id)
                 }
             )
@@ -128,6 +141,15 @@ private struct WelcomeOrPickerScene: View {
                 onAddAccount: { openWindow(id: "onboarding") }
             )
         }
+    }
+}
+
+/// Запрашивает разрешение на уведомления при добавлении первого аккаунта.
+/// Вызывается один раз за жизненный цикл приложения.
+private func requestNotificationPermissionIfNeeded(registry: AccountRegistry) {
+    guard registry.accounts.count == 1 else { return }
+    Task {
+        _ = await NotificationManager.shared.requestPermission()
     }
 }
 
@@ -155,6 +177,7 @@ private struct OnboardingWindow: View {
             onCancel: { dismissWindow(id: "onboarding") },
             onCompleted: { account in
                 dismissWindow(id: "onboarding")
+                requestNotificationPermissionIfNeeded(registry: registry)
                 openWindow(id: "account", value: account.id)
             }
         )

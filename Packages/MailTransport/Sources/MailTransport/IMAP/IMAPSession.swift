@@ -43,6 +43,29 @@ private enum SessionCommand: Sendable {
         attributes: String,
         CheckedContinuation<(fetches: [IMAPFetchResponse], parseErrors: Int), any Error>
     )
+    case uidStore(
+        uid: UInt32,
+        operation: IMAPConnection.StoreOperation,
+        flags: [IMAPConnection.StandardFlag],
+        CheckedContinuation<IMAPCommandResult, any Error>
+    )
+    case expunge(CheckedContinuation<Void, any Error>)
+    case uidMove(
+        uid: UInt32,
+        to: String,
+        CheckedContinuation<Void, any Error>
+    )
+    case uidMoveFallback(
+        uid: UInt32,
+        to: String,
+        CheckedContinuation<Void, any Error>
+    )
+    case capability(CheckedContinuation<[String], any Error>)
+    case fetchBody(
+        uid: UInt32,
+        section: String,
+        CheckedContinuation<[UInt8], any Error>
+    )
     case logout(CheckedContinuation<Void, any Error>)
 }
 
@@ -78,6 +101,11 @@ public actor IMAPSession {
 
     /// Защита от повторного `start()`.
     private var started = false
+
+    /// Continuation, который резюмируется когда сессия достигает `.ready`
+    /// или `.disconnected(error)`. Используется чтобы `start()` дожидался
+    /// готовности соединения.
+    private var startContinuation: CheckedContinuation<Void, any Error>?
 
     // MARK: - Init
 
@@ -124,6 +152,7 @@ public actor IMAPSession {
                     await self?.setState(.authenticating)
                     try await conn.login(username: username, password: password)
                     await self?.setState(.ready)
+                    await self?.resumeStart(.success(()))
 
                     // Command loop: читаем команды из stream пока он не завершится.
                     for await command in stream {
@@ -136,12 +165,27 @@ public actor IMAPSession {
                 }
             } catch is CancellationError {
                 await self?.setState(.disconnected(nil))
+                await self?.resumeStart(.failure(CancellationError()))
             } catch {
                 await self?.setState(.disconnected(error))
+                await self?.resumeStart(.failure(error))
                 // Завершаем все pending continuation'ы с ошибкой.
                 await self?.failAllPending(with: error)
             }
         }
+
+        // Ждём, пока background task достигнет .ready или упадёт с ошибкой.
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, any Error>) in
+            self.startContinuation = cont
+        }
+    }
+
+    /// Резюмирует `startContinuation` (если он установлен). Безопасно
+    /// при повторных вызовах — continuation очищается после первого.
+    private func resumeStart(_ result: Result<Void, any Error>) {
+        guard let cont = startContinuation else { return }
+        startContinuation = nil
+        cont.resume(with: result)
     }
 
     /// Останавливает сессию: закрывает command stream,(background task
@@ -178,6 +222,60 @@ public actor IMAPSession {
     ) async throws -> (fetches: [IMAPFetchResponse], parseErrors: Int) {
         try await enqueueCommand { continuation in
             .uidFetchHeaders(range: range, attributes: attributes, continuation)
+        }
+    }
+
+    /// Алиас для `mailboxes()` — IMAP LIST.
+    public func list() async throws -> [ListEntry] {
+        try await mailboxes()
+    }
+
+    /// UID STORE — изменяет флаги письма (RFC 3501 STORE).
+    public func uidStore(
+        uid: UInt32,
+        operation: IMAPConnection.StoreOperation,
+        flags: [IMAPConnection.StandardFlag]
+    ) async throws -> IMAPCommandResult {
+        try await enqueueCommand { continuation in
+            .uidStore(uid: uid, operation: operation, flags: flags, continuation)
+        }
+    }
+
+    /// EXPUNGE — физическое удаление писем с флагом \Deleted.
+    public func expunge() async throws {
+        try await enqueueCommand { continuation in
+            .expunge(continuation)
+        }
+    }
+
+    /// UID MOVE (RFC 6851) — атомарное перемещение.
+    public func uidMove(uid: UInt32, to destination: String) async throws {
+        try await enqueueCommand { continuation in
+            .uidMove(uid: uid, to: destination, continuation)
+        }
+    }
+
+    /// Fallback-перемещение для серверов без MOVE: COPY + STORE + EXPUNGE.
+    public func uidMoveFallback(uid: UInt32, to destination: String) async throws {
+        try await enqueueCommand { continuation in
+            .uidMoveFallback(uid: uid, to: destination, continuation)
+        }
+    }
+
+    /// CAPABILITY — список поддерживаемых расширений сервера.
+    public func capability() async throws -> [String] {
+        try await enqueueCommand { continuation in
+            .capability(continuation)
+        }
+    }
+
+    /// Собирает всё тело письма в память (UID FETCH BODY.PEEK[]).
+    /// Чанки собираются внутри command loop и возвращаются единым массивом.
+    /// Не использовать для больших вложений — в этом случае нужно
+    /// временное соединение через `withSession`.
+    public func fetchBody(uid: UInt32, section: String = "") async throws -> [UInt8] {
+        try await enqueueCommand { continuation in
+            .fetchBody(uid: uid, section: section, continuation)
         }
     }
 
@@ -229,6 +327,18 @@ public actor IMAPSession {
         }
     }
 
+    /// Прокидывает результат `work()` в continuation, при ошибке — её же.
+    private nonisolated func bridge<T>(
+        _ cont: CheckedContinuation<T, any Error>,
+        _ work: () async throws -> T
+    ) async {
+        do {
+            cont.resume(returning: try await work())
+        } catch {
+            cont.resume(throwing: error)
+        }
+    }
+
     /// Обрабатывает одну команду на соединении.
     private nonisolated func handleCommand(
         _ command: SessionCommand,
@@ -236,38 +346,29 @@ public actor IMAPSession {
     ) async {
         switch command {
         case .mailboxes(let cont):
-            do {
-                let result = try await connection.list()
-                cont.resume(returning: result)
-            } catch {
-                cont.resume(throwing: error)
-            }
-
+            await bridge(cont) { try await connection.list() }
         case .select(let mailbox, let cont):
-            do {
-                let result = try await connection.select(mailbox)
-                cont.resume(returning: result)
-            } catch {
-                cont.resume(throwing: error)
-            }
-
+            await bridge(cont) { try await connection.select(mailbox) }
         case .uidFetchHeaders(let range, let attributes, let cont):
-            do {
-                let result = try await connection.uidFetchHeaders(
-                    range: range, attributes: attributes
-                )
-                cont.resume(returning: result)
-            } catch {
-                cont.resume(throwing: error)
+            await bridge(cont) {
+                try await connection.uidFetchHeaders(range: range, attributes: attributes)
             }
-
+        case .uidStore(let uid, let operation, let flags, let cont):
+            await bridge(cont) {
+                try await connection.uidStore(uid: uid, operation: operation, flags: flags)
+            }
+        case .expunge(let cont):
+            await bridge(cont) { try await connection.expunge() }
+        case .uidMove(let uid, let to, let cont):
+            await bridge(cont) { try await connection.uidMove(uid: uid, to: to) }
+        case .uidMoveFallback(let uid, let to, let cont):
+            await bridge(cont) { try await connection.uidMoveFallback(uid: uid, to: to) }
+        case .capability(let cont):
+            await bridge(cont) { try await connection.capability() }
+        case .fetchBody(let uid, let section, let cont):
+            await bridge(cont) { try await connection.fetchBody(uid: uid, section: section) }
         case .logout(let cont):
-            do {
-                try await connection.logout()
-                cont.resume(returning: ())
-            } catch {
-                cont.resume(throwing: error)
-            }
+            await bridge(cont) { try await connection.logout() }
         }
     }
 
