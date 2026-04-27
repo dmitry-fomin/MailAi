@@ -11,6 +11,18 @@ cd "$ROOT"
 echo "▶ build all packages"
 swift build
 
+echo "▶ build MailAi.app (xcodebuild)"
+if command -v xcodebuild >/dev/null 2>&1 && [ -d "$ROOT/MailAi.xcodeproj" ]; then
+  if xcodebuild -project MailAi.xcodeproj -scheme MailAi -destination 'platform=macOS' build > /tmp/xcb.log 2>&1; then
+    echo "✓ MailAi.app собран"
+  else
+    tail -50 /tmp/xcb.log
+    exit 1
+  fi
+else
+  echo "⚠ xcodebuild недоступен или MailAi.xcodeproj отсутствует — пропускаем сборку app-таргета"
+fi
+
 echo "▶ lint theming & Dynamic Type (A9)"
 "$ROOT/Scripts/lint-theming.sh"
 
