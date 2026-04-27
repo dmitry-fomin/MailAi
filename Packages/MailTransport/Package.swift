@@ -12,7 +12,8 @@ let package = Package(
         .executable(name: "SMTPSmoke", targets: ["SMTPSmoke"]),
         .executable(name: "MIMESmoke", targets: ["MIMESmoke"]),
         .executable(name: "SMTPProviderSmoke", targets: ["SMTPProviderSmoke"]),
-        .executable(name: "IMAPAppendSmoke", targets: ["IMAPAppendSmoke"])
+        .executable(name: "IMAPAppendSmoke", targets: ["IMAPAppendSmoke"]),
+        .executable(name: "SMTPEndToEndSmoke", targets: ["SMTPEndToEndSmoke"])
     ],
     dependencies: [
         .package(path: "../Core"),
@@ -123,6 +124,19 @@ let package = Package(
                 "MailTransport"
             ],
             path: "Sources/IMAPAppendSmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
+        ),
+        .executableTarget(
+            name: "SMTPEndToEndSmoke",
+            dependencies: [
+                "MailTransport", "Core", "Secrets",
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio")
+            ],
+            path: "Sources/SMTPEndToEndSmoke",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableUpcomingFeature("ExistentialAny")
