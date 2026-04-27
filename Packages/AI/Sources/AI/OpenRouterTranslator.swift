@@ -15,7 +15,7 @@ public actor OpenRouterTranslator: AITranslator {
     ///
     /// Системный промпт загружается из `PromptStore` по идентификатору `"translate"`.
     /// Если промпт не найден — используется встроенный фоллбек.
-    public func translate(body: String, targetLanguage: String) async throws -> Translation {
+    public func translate(body: String, targetLanguage: String) async throws -> MailTranslation {
         let systemPrompt = await buildSystemPrompt(targetLanguage: targetLanguage)
 
         var fullResponse = ""

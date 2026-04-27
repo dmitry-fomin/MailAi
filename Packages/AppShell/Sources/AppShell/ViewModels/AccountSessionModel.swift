@@ -1,6 +1,7 @@
 import Foundation
 import Core
 import AI
+import Network
 
 /// Состояние одного окна-аккаунта. Держит выбранную папку, список писем
 /// выбранной папки и открытое письмо. Полное тело — только в памяти, пока
@@ -35,6 +36,7 @@ public final class AccountSessionModel: ObservableObject {
     @Published public private(set) var isLoadingMailboxes: Bool = false
     @Published public private(set) var isLoadingMessages: Bool = false
     @Published public private(set) var lastError: MailError?
+    @Published public private(set) var isOffline: Bool = false
 
     /// Строка в поисковом поле окна. Пустая строка — обычный режим
     /// (listMode == .mailbox). Непустая — подтягивается searchResults.
@@ -50,6 +52,8 @@ public final class AccountSessionModel: ObservableObject {
     private var messagesTask: Task<Void, Never>?
     private var bodyTask: Task<Void, Never>?
     private var searchTask: Task<Void, Never>?
+    private var pathMonitor: NWPathMonitor?
+    private var monitorTask: Task<Void, Never>?
 
     public init(
         account: Account,
@@ -259,6 +263,38 @@ public final class AccountSessionModel: ObservableObject {
         if selectedMessageID == messageID {
             selectedMessageID = messages.first?.id
         }
+    }
+
+    // MARK: - MailAi-791: Network Monitoring
+
+    public func startNetworkMonitoring() {
+        let monitor = NWPathMonitor()
+        pathMonitor = monitor
+        monitorTask = Task { [weak self] in
+            let stream = AsyncStream<NWPath> { continuation in
+                monitor.pathUpdateHandler = { continuation.yield($0) }
+                monitor.start(queue: DispatchQueue(label: "network.monitor"))
+            }
+            for await path in stream {
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    let wasOffline = self.isOffline
+                    self.isOffline = path.status != .satisfied
+                    if wasOffline && !self.isOffline {
+                        if let id = self.selectedMailboxID {
+                            Task { await self.loadMessages(for: id) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    public func stopNetworkMonitoring() {
+        pathMonitor?.cancel()
+        monitorTask?.cancel()
+        pathMonitor = nil
+        monitorTask = nil
     }
 
     private func updateFlags(messageID: Message.ID, mutate: (inout MessageFlags) -> Void) {

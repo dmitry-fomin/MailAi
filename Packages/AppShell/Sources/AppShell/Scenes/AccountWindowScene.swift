@@ -28,6 +28,15 @@ public struct AccountWindowScene: View {
     /// Показывать диалог подтверждения отписки.
     @State private var showUnsubscribeConfirm = false
 
+    // MARK: - MailAi-rpd: Delete Confirmation
+
+    /// Показывать диалог подтверждения удаления.
+    @State private var showDeleteConfirmation = false
+
+    // MARK: - MailAi-mi6: Undo Stack
+
+    @State private var undoStack = UndoStack(capacity: 10)
+
     // MARK: - Message Translation (MailAi-mz3)
 
     /// Переведённое тело письма. nil — перевод не запрошен. Живёт только в @State.
@@ -93,6 +102,21 @@ public struct AccountWindowScene: View {
                 .focused($focus, equals: .reader)
         }
         .navigationTitle(session.account.email)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            // MailAi-791: офлайн-баннер.
+            if session.isOffline {
+                HStack {
+                    Image(systemName: "wifi.slash")
+                    Text("Нет подключения — показаны кешированные данные")
+                        .font(.caption)
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(.orange.opacity(0.9))
+                .frame(maxWidth: .infinity)
+            }
+        }
         .background(shortcutsBackground)
         .task {
             await session.loadMailboxes()
@@ -107,6 +131,8 @@ public struct AccountWindowScene: View {
             }
             // Стартовый фокус — в списке писем.
             if focus == nil { focus = .list }
+            // MailAi-791: запуск мониторинга сети.
+            session.startNetworkMonitoring()
         }
         .onChange(of: session.mailboxes) { _, _ in
             Task { await rebuildSidebar() }
@@ -117,6 +143,7 @@ public struct AccountWindowScene: View {
         }
         .onDisappear {
             classificationProgress.unbind()
+            session.stopNetworkMonitoring()
             session.closeSession()
         }
         .sheet(item: $ruleProposal) { proposal in
@@ -132,6 +159,12 @@ public struct AccountWindowScene: View {
         }
         .sheet(item: $composeRequest) { request in
             ComposeScene(model: request.model, onClose: { composeRequest = nil })
+        }
+        .confirmationDialog("Удалить письмо?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+            Button("Удалить", role: .destructive) {
+                Task { await session.perform(.delete) }
+            }
+            Button("Отмена", role: .cancel) {}
         }
         .overlay(alignment: .bottom) {
             if let toast = ruleConfirmation {
@@ -243,32 +276,59 @@ public struct AccountWindowScene: View {
             header
             progressBar
             Divider()
-            ScrollViewReader { proxy in
-                List(selection: Binding(
-                    get: { session.selectedMessageID },
-                    set: { id in
-                        session.selectedMessageID = id
-                        session.open(messageID: id)
+            // MailAi-3iz: пустые состояния.
+            if !session.searchQuery.isEmpty && session.searchResults.isEmpty && !session.isSearching {
+                ContentUnavailableView.search(text: session.searchQuery)
+            } else if session.lastError != nil && session.messages.isEmpty {
+                VStack(spacing: 12) {
+                    ContentUnavailableView(
+                        "Не удалось загрузить",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text("Проверьте соединение")
+                    )
+                    Button("Повторить") {
+                        Task {
+                            if let id = session.selectedMailboxID {
+                                await session.loadMessages(for: id)
+                            }
+                        }
                     }
-                )) {
-                    ForEach(displayedMessages) { message in
-                        draggableRow(for: message)
-                            .tag(message.id as Message.ID?)
-                            .id(message.id)
+                    .buttonStyle(.borderedProminent)
+                }
+            } else if session.messages.isEmpty && !session.isLoadingMessages && session.lastError == nil && session.searchQuery.isEmpty {
+                ContentUnavailableView(
+                    "Папка пуста",
+                    systemImage: "tray",
+                    description: Text("Здесь появятся письма")
+                )
+            } else {
+                ScrollViewReader { proxy in
+                    List(selection: Binding(
+                        get: { session.selectedMessageID },
+                        set: { id in
+                            session.selectedMessageID = id
+                            session.open(messageID: id)
+                        }
+                    )) {
+                        ForEach(displayedMessages) { message in
+                            draggableRow(for: message)
+                                .tag(message.id as Message.ID?)
+                                .id(message.id)
+                        }
                     }
-                }
-                .onKeyPress(.upArrow) {
-                    moveSelection(by: -1, proxy: proxy)
-                    return .handled
-                }
-                .onKeyPress(.downArrow) {
-                    moveSelection(by: 1, proxy: proxy)
-                    return .handled
-                }
-                .onChange(of: session.selectedMessageID) { _, newID in
-                    guard let id = newID else { return }
-                    withAnimation(.easeOut(duration: 0.1)) {
-                        proxy.scrollTo(id, anchor: .center)
+                    .onKeyPress(.upArrow) {
+                        moveSelection(by: -1, proxy: proxy)
+                        return .handled
+                    }
+                    .onKeyPress(.downArrow) {
+                        moveSelection(by: 1, proxy: proxy)
+                        return .handled
+                    }
+                    .onChange(of: session.selectedMessageID) { _, newID in
+                        guard let id = newID else { return }
+                        withAnimation(.easeOut(duration: 0.1)) {
+                            proxy.scrollTo(id, anchor: .center)
+                        }
                     }
                 }
             }
@@ -406,7 +466,7 @@ public struct AccountWindowScene: View {
                         ))
                     },
                     archive: { Task { await session.perform(.archive) } },
-                    delete: { Task { await session.perform(.delete) } },
+                    delete: { showDeleteConfirmation = true },
                     flag: { Task { await session.perform(.toggleFlag) } },
                     toggleRead: { Task { await session.perform(.toggleRead) } },
                     unsubscribe: message.listUnsubscribe != nil
@@ -474,6 +534,12 @@ public struct AccountWindowScene: View {
                 showTranslation = false
                 isTranslating = false
             }
+        } else if session.openBody == nil && session.isOffline && session.selectedMessageID != nil {
+            ContentUnavailableView(
+                "Тело письма недоступно офлайн",
+                systemImage: "wifi.slash",
+                description: Text("Подключитесь к интернету, чтобы загрузить письмо.")
+            )
         } else {
             ContentUnavailableView(
                 "Выберите письмо",
@@ -567,6 +633,15 @@ public struct AccountWindowScene: View {
                 }
             }
             .keyboardShortcut("r", modifiers: [.command])
+            // MailAi-mi6: ⌘Z — отмена последнего действия.
+            Button("Undo") {
+                Task {
+                    let action = await undoStack.pop()
+                    guard action != nil else { return }
+                    await showToast("Отменено")
+                }
+            }
+            .keyboardShortcut("z", modifiers: [.command])
         }
         .opacity(0)
         .frame(width: 0, height: 0)
