@@ -32,3 +32,4 @@ xcuserdata/
 
 # A10: сгенерированные скриншот-артефакты (CI публикует отдельно).
 Scripts/artifacts/
+.claude/worktrees/
