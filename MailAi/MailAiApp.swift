@@ -136,14 +136,27 @@ struct MailAiApp: App {
 
         // StatusBar: иконка в строке меню со счётчиком непрочитанных.
         MenuBarExtra {
-            StatusBarMenuContent(
-                accounts: statusBarAccounts,
-                onOpenAccount: { id in openWindow(id: "account", value: id) },
-                onCompose: { openWindow(id: "welcome") }
-            )
+            StatusBarMenu(registry: registry, statusBarAccounts: statusBarAccounts)
         } label: {
             StatusBarBadgeLabel(unreadCount: registry.totalUnreadCount)
         }
+    }
+}
+
+/// Обёртка для содержимого `MenuBarExtra` — нужна, чтобы получить
+/// `@Environment(\.openWindow)`: на уровне `App.body` это окружение
+/// недоступно, его поставляет SwiftUI только внутри View-иерархии.
+private struct StatusBarMenu: View {
+    @ObservedObject var registry: AccountRegistry
+    let statusBarAccounts: [StatusBarAccountItem]
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        StatusBarMenuContent(
+            accounts: statusBarAccounts,
+            onOpenAccount: { id in openWindow(id: "account", value: id) },
+            onCompose: { openWindow(id: "welcome") }
+        )
     }
 }
 
@@ -176,7 +189,9 @@ private struct WelcomeOrPickerScene: View {
 }
 
 /// Запрашивает разрешение на уведомления при добавлении первого аккаунта.
-/// Вызывается один раз за жизненный цикл приложения.
+/// Вызывается один раз за жизненный цикл приложения. `@MainActor`, так как
+/// читает `registry.accounts` (AccountRegistry изолирован на MainActor).
+@MainActor
 private func requestNotificationPermissionIfNeeded(registry: AccountRegistry) {
     guard registry.accounts.count == 1 else { return }
     Task {
