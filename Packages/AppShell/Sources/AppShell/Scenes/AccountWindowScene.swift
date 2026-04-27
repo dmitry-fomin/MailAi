@@ -8,6 +8,9 @@ public struct AccountWindowScene: View {
     @StateObject private var sidebar: SidebarViewModel
     @StateObject private var classificationProgress: ClassificationProgressViewModel
 
+    /// AI-G: переводчик писем. nil — кнопка «Перевести» скрыта.
+    private let translator: (any AITranslator)?
+
     /// A6: зоны клавиатурного фокуса окна. Tab циклирует их в порядке
     /// sidebar → list → reader. ⌘1 / ⌘2 переводят фокус в sidebar / list
     /// напрямую.
@@ -19,6 +22,20 @@ public struct AccountWindowScene: View {
 
     /// AI-5: short toast после успешного создания правила.
     @State private var ruleConfirmation: String?
+
+    // MARK: - Smart Unsubscribe (MailAi-5m2)
+
+    /// Показывать диалог подтверждения отписки.
+    @State private var showUnsubscribeConfirm = false
+
+    // MARK: - Message Translation (MailAi-mz3)
+
+    /// Переведённое тело письма. nil — перевод не запрошен. Живёт только в @State.
+    @State private var translatedBody: MailTranslation?
+    /// true — идёт запрос перевода.
+    @State private var isTranslating = false
+    /// true — показывать перевод вместо оригинала.
+    @State private var showTranslation = false
 
     /// Wrapper для `ComposeViewModel`, чтобы использовать `sheet(item:)`.
     /// `ComposeViewModel` не `Identifiable`, поэтому оборачиваем.
@@ -42,8 +59,9 @@ public struct AccountWindowScene: View {
         let mode: RuleProposalSheet.Mode
     }
 
-    public init(session: AccountSessionModel) {
+    public init(session: AccountSessionModel, translator: (any AITranslator)? = nil) {
         self.session = session
+        self.translator = translator
         _sidebar = StateObject(wrappedValue: SidebarViewModel(account: session.account))
         _classificationProgress = StateObject(wrappedValue: ClassificationProgressViewModel())
     }
@@ -390,18 +408,71 @@ public struct AccountWindowScene: View {
                     archive: { Task { await session.perform(.archive) } },
                     delete: { Task { await session.perform(.delete) } },
                     flag: { Task { await session.perform(.toggleFlag) } },
-                    toggleRead: { Task { await session.perform(.toggleRead) } }
+                    toggleRead: { Task { await session.perform(.toggleRead) } },
+                    unsubscribe: message.listUnsubscribe != nil
+                        ? { showUnsubscribeConfirm = true }
+                        : nil,
+                    translate: translator != nil
+                        ? { Task { await performTranslation(body: body) } }
+                        : nil
                 ))
+                .confirmationDialog("Отписаться от рассылки?", isPresented: $showUnsubscribeConfirm) {
+                    Button("Отписаться", role: .destructive) {
+                        Task { await showToast("Запрос на отписку отправлен") }
+                    }
+                    Button("Отмена", role: .cancel) {}
+                }
                 Divider()
-                ReaderBodyView(
-                    body: body,
-                    isFocused: Binding(
-                        get: { focus == .reader },
-                        set: { newValue in
-                            if newValue { focus = .reader }
-                        }
+                // Переключатель Оригинал / Перевод
+                if translatedBody != nil {
+                    Picker("", selection: $showTranslation) {
+                        Text("Оригинал").tag(false)
+                        Text("Перевод").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                }
+                if isTranslating {
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                        Text("Перевод…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                }
+                if showTranslation, let translation = translatedBody {
+                    ReaderBodyView(
+                        body: MessageBody(
+                            messageID: body.messageID,
+                            content: .plain(translation.text),
+                            attachments: body.attachments
+                        ),
+                        isFocused: Binding(
+                            get: { focus == .reader },
+                            set: { newValue in if newValue { focus = .reader } }
+                        )
                     )
-                )
+                } else {
+                    ReaderBodyView(
+                        body: body,
+                        isFocused: Binding(
+                            get: { focus == .reader },
+                            set: { newValue in
+                                if newValue { focus = .reader }
+                            }
+                        )
+                    )
+                }
+            }
+            .onChange(of: session.selectedMessageID) { _, _ in
+                // Сбрасываем перевод при смене письма.
+                translatedBody = nil
+                showTranslation = false
+                isTranslating = false
             }
         } else {
             ContentUnavailableView(
@@ -409,6 +480,30 @@ public struct AccountWindowScene: View {
                 systemImage: "envelope",
                 description: Text("Кликните по строке в списке, чтобы открыть содержимое.")
             )
+        }
+    }
+
+    /// Запрашивает перевод через `translator`. Результат — только в @State.
+    @MainActor
+    private func performTranslation(body: MessageBody) async {
+        guard let translator else { return }
+        guard !isTranslating else { return }
+        let text: String
+        switch body.content {
+        case .plain(let s): text = s
+        case .html(let h): text = HTMLSanitizer.plainText(from: h)
+        }
+        guard !text.isEmpty else { return }
+        isTranslating = true
+        defer {
+            isTranslating = false
+        }
+        do {
+            let result: MailTranslation = try await translator.translate(body: text, targetLanguage: "ru")
+            translatedBody = result
+            showTranslation = true
+        } catch {
+            await showToast("Не удалось перевести письмо")
         }
     }
 

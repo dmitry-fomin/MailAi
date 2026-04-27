@@ -12,6 +12,10 @@ public struct ReaderToolbar: View {
         public var delete: () -> Void
         public var flag: () -> Void
         public var toggleRead: () -> Void
+        /// Действие «Отписаться». nil — кнопка скрыта.
+        public var unsubscribe: (() -> Void)?
+        /// Действие «Перевести». nil — кнопка скрыта.
+        public var translate: (() -> Void)?
 
         public init(
             reply: @escaping () -> Void = {},
@@ -20,7 +24,9 @@ public struct ReaderToolbar: View {
             archive: @escaping () -> Void = {},
             delete: @escaping () -> Void = {},
             flag: @escaping () -> Void = {},
-            toggleRead: @escaping () -> Void = {}
+            toggleRead: @escaping () -> Void = {},
+            unsubscribe: (() -> Void)? = nil,
+            translate: (() -> Void)? = nil
         ) {
             self.reply = reply
             self.replyAll = replyAll
@@ -29,6 +35,8 @@ public struct ReaderToolbar: View {
             self.delete = delete
             self.flag = flag
             self.toggleRead = toggleRead
+            self.unsubscribe = unsubscribe
+            self.translate = translate
         }
     }
 
@@ -40,6 +48,14 @@ public struct ReaderToolbar: View {
 
     public var body: some View {
         HStack(spacing: 4) {
+            if let unsubscribe = actions.unsubscribe {
+                toolButton("hand.raised.slash", "Отписаться", action: unsubscribe)
+                Divider().frame(height: 16).padding(.horizontal, 4)
+            }
+            if let translate = actions.translate {
+                toolButton("character.bubble", "Перевести", action: translate)
+                Divider().frame(height: 16).padding(.horizontal, 4)
+            }
             toolButton("arrowshape.turn.up.left", "Ответить", action: actions.reply)
             toolButton("arrowshape.turn.up.left.2", "Ответить всем", action: actions.replyAll)
             toolButton("arrowshape.turn.up.right", "Переслать", action: actions.forward)
