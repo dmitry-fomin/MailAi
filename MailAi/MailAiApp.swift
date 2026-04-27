@@ -7,6 +7,21 @@ import Storage
 import UI
 import UserNotifications
 
+// MARK: - Compose window value
+
+/// SMTP-5: значение, идентифицирующее compose-окно. Привязано к аккаунту,
+/// но в отличие от `account` window-id допускает несколько одновременных
+/// окон (черновики).
+struct ComposeWindowValue: Hashable, Codable {
+    let accountID: Account.ID
+    let nonce: UUID
+
+    init(accountID: Account.ID) {
+        self.accountID = accountID
+        self.nonce = UUID()
+    }
+}
+
 // MARK: - App Delegate
 
 /// Делегат приложения: настраивает `UNUserNotificationCenter.delegate`
@@ -76,6 +91,7 @@ struct MailAiApp: App {
         }
         .commands {
             NewAccountWindowCommands()
+            ComposeCommands(registry: registry)
         }
 
         // C4: онбординг — отдельное окно, показывается по нажатию «Добавить аккаунт».
@@ -99,6 +115,21 @@ struct MailAiApp: App {
                     "Аккаунт не найден",
                     systemImage: "exclamationmark.triangle",
                     description: Text("Закройте окно и выберите аккаунт заново.")
+                )
+            }
+        }
+
+        // SMTP-5: окно compose. Каждое значение `ComposeWindowValue.nonce`
+        // даёт отдельное окно, чтобы можно было параллельно писать несколько
+        // черновиков. Тело и поля живут только в @StateObject — на диск не пишутся.
+        WindowGroup("Новое письмо", id: "compose", for: ComposeWindowValue.self) { $value in
+            if let value, let session = registry.session(for: value.accountID) {
+                ComposeWindow(session: session, mode: registry.mode, secrets: secretsStore)
+            } else {
+                ContentUnavailableView(
+                    "Аккаунт не выбран",
+                    systemImage: "envelope",
+                    description: Text("Откройте окно аккаунта и выберите ⌘N снова.")
                 )
             }
         }
@@ -184,9 +215,10 @@ private struct OnboardingWindow: View {
     }
 }
 
-/// Команды для «File → New Account Window…». Отдельная `Commands`-структура
-/// позволяет получить `openWindow` из Environment, чего нельзя сделать
-/// напрямую в `Scene.commands`.
+/// Команды для «File → New Account Window…». SMTP-5: ⌘N теперь открывает
+/// окно нового письма (см. `ComposeCommands`), а «New Account Window»
+/// перевешен на ⌘⇧N — это меньше конфликтует с системными ожиданиями
+/// (mail.app: ⌘N = новое письмо).
 private struct NewAccountWindowCommands: Commands {
     @Environment(\.openWindow) private var openWindow
 
@@ -195,7 +227,59 @@ private struct NewAccountWindowCommands: Commands {
             Button("New Account Window…") {
                 openWindow(id: "welcome")
             }
-            .keyboardShortcut("n", modifiers: [.command])
+            .keyboardShortcut("n", modifiers: [.command, .shift])
         }
+    }
+}
+
+/// SMTP-5: команда «File → New Message» (⌘N). Открывает compose-окно для
+/// первого активного аккаунта. Если аккаунтов нет — открывает welcome.
+private struct ComposeCommands: Commands {
+    @ObservedObject var registry: AccountRegistry
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button("New Message") {
+                if let account = registry.accounts.first {
+                    openWindow(
+                        id: "compose",
+                        value: ComposeWindowValue(accountID: account.id)
+                    )
+                } else {
+                    openWindow(id: "welcome")
+                }
+            }
+            .keyboardShortcut("n", modifiers: [.command])
+            .disabled(registry.accounts.isEmpty)
+        }
+    }
+}
+
+/// Обёртка-владелец `ComposeViewModel` — `@StateObject` живёт ровно столько,
+/// сколько окно. Тело письма — только в памяти этой VM.
+private struct ComposeWindow: View {
+    @StateObject private var model: ComposeViewModel
+    @Environment(\.dismissWindow) private var dismissWindow
+
+    init(session: AccountSessionModel, mode: AppShellMode, secrets: any SecretsStore) {
+        let sendProvider = AccountDataProviderFactory.makeSendProvider(
+            for: session.account,
+            mode: mode,
+            secrets: secrets
+        )
+        let draftSaver = AccountDataProviderFactory.makeDraftSaver(
+            provider: session.provider
+        )
+        _model = StateObject(wrappedValue: ComposeViewModel(
+            accountEmail: session.account.email,
+            accountDisplayName: session.account.displayName,
+            sendProvider: sendProvider,
+            draftSaver: draftSaver
+        ))
+    }
+
+    var body: some View {
+        ComposeScene(model: model, onClose: { dismissWindow() })
     }
 }
