@@ -133,9 +133,12 @@ public final class IMAPConnection: @unchecked Sendable {
 
     /// B8: IDLE (RFC 2177). Отправляет `IDLE`, ждёт `+ continuation`, затем
     /// читает untagged-события и передаёт их в `onEvent` до отмены задачи
-    /// или ошибки канала. По `CancellationError` отправляет `DONE` и ждёт
-    /// финальный tagged OK. Реконнект и re-IDLE каждые 29 мин — зона
-    /// ответственности `IMAPReconnectSupervisor` поверх этого примитива.
+    /// или ошибки канала. По отмене текущего `Task` отправляет `DONE` через
+    /// `withTaskCancellationHandler` (NIOAsyncChannel iterator.next() не
+    /// реагирует на cancel при отсутствии трафика — Pool-3-fix), сервер
+    /// отвечает tagged OK, итератор просыпается и цикл завершается.
+    /// Реконнект и re-IDLE каждые 29 мин — зона ответственности
+    /// `IMAPReconnectSupervisor` поверх этого примитива.
     @discardableResult
     public func idle(
         onEvent: (IMAPUntaggedResponse) -> Void = { _ in }
@@ -157,9 +160,9 @@ public final class IMAPConnection: @unchecked Sendable {
             break
         }
 
-        do {
+        let outbound = self.outbound
+        return try await withTaskCancellationHandler {
             while true {
-                try Task.checkCancellation()
                 guard let line = try await iterator.next() else {
                     throw IMAPConnectionError.channelClosed
                 }
@@ -172,19 +175,13 @@ public final class IMAPConnection: @unchecked Sendable {
                     continue
                 }
             }
-        } catch is CancellationError {
-            try await outbound.write(IMAPLine("DONE"))
-            while let line = try await iterator.next() {
-                switch IMAPParser.parse(line.raw) {
-                case .tagged(let t) where t.tag == tag:
-                    return t
-                case .untagged(let u):
-                    onEvent(u)
-                default:
-                    continue
-                }
-            }
-            throw IMAPConnectionError.channelClosed
+        } onCancel: {
+            // Pool-3-fix: NIOAsyncChannel iterator не пробуждается на
+            // Task.cancel() в отсутствие трафика. Принудительно шлём DONE —
+            // сервер ответит tagged OK, и read-цикл выйдет естественно.
+            // Task.detached, чтобы не унаследовать отменённый статус
+            // от текущей (только что отменённой) задачи.
+            Task.detached { try? await outbound.write(IMAPLine("DONE")) }
         }
     }
 

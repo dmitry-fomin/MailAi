@@ -541,14 +541,13 @@ public actor IMAPIdleController {
                 }
             }
             group.addTask {
-                do {
-                    _ = try await idleTask.value
-                    return .idleFinished(.success(()))
-                } catch is CancellationError {
-                    return .idleFinished(.success(()))
-                } catch {
-                    return .idleFinished(.failure(IdleErrorBox(description: String(describing: error))))
-                }
+                // Pool-3-fix: при group.cancelAll() Task.value не реагирует на
+                // отмену ожидающего — пробрасываем cancel в idleTask явно.
+                await withTaskCancellationHandler {
+                    do { _ = try await idleTask.value; return .idleFinished(.success(())) }
+                    catch is CancellationError { return .idleFinished(.success(())) }
+                    catch { return .idleFinished(.failure(IdleErrorBox(description: String(describing: error)))) }
+                } onCancel: { idleTask.cancel() }
             }
             group.addTask {
                 try? await Task.sleep(for: idleTimeout)

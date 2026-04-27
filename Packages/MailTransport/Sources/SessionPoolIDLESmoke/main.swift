@@ -426,28 +426,22 @@ func runSmoke() async throws {
     check("LOGOUT отправлен ИЛИ соединение закрыто после session.stop()",
           signals.logoutSeen || signals.channelClosedNonGracefully)
 
-    // 6. Для IDLE-сессии корректное завершение — обрыв канала. Симулируем
-    // разрыв связи (например, сетевая ошибка / закрытие сервера) и проверяем,
-    // что IMAPIdleController переходит в .stopped без deadlock'а.
-    // Это и есть «cancellation → соединение закрыто» инвариант для IDLE-канала:
-    // NIO async iterator на простаивающем IDLE-канале не cancellable
-    // изнутри, поэтому stop() контроллера полагается либо на ответы сервера,
-    // либо на разрыв соединения.
-    log("▶ closing IDLE client connection on server side")
-    await server.closeIdleConnections()
-    log("◀ IDLE connection closed")
-
+    // 6. Pool-3-fix: idle.stop() должен корректно завершать контроллер даже
+    // при простаивающем канале (без принудительного обрыва). Внутри
+    // IMAPConnection.idle() стоит withTaskCancellationHandler, который при
+    // отмене Task шлёт DONE — сервер отвечает tagged OK и read-цикл выходит.
+    log("▶ stopping IDLE controller on idle channel (no server-side close)")
     await withTimeout(seconds: 10, label: "idle.stop") {
         await idle.stop()
     }
     let idleFinalState = await idle.state
     if case .stopped = idleFinalState {
-        log("✓ IMAPIdleController state == .stopped после обрыва канала")
+        log("✓ IMAPIdleController state == .stopped без обрыва канала")
     } else {
         die("IMAPIdleController state неожиданный: \(idleFinalState)")
     }
-    check("IDLE-канал закрыт ИЛИ DONE отправлен (cancel-инвариант)",
-          signals.doneSeen || signals.channelClosedNonGracefully)
+    check("DONE отправлен сервером во время idle.stop() (Pool-3-fix)",
+          signals.doneSeen)
 
     try await server.stop()
     print("✅ SessionPoolIDLESmoke OK")
