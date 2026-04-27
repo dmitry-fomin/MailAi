@@ -40,12 +40,29 @@ public enum AccountDataProviderFactory {
         switch mode {
         case .mock: return MockAccountDataProvider()
         case .live:
+            if account.kind == .exchange {
+                return makeExchange(account: account, secrets: secrets)
+            }
             return LiveAccountDataProvider(
                 account: account,
                 store: store ?? InMemoryMetadataStore(),
                 secrets: secrets
             )
         }
+    }
+
+    private static func makeExchange(account: Account, secrets: (any SecretsStore)?) -> any AccountDataProvider {
+        // EWS URL сохраняется при онбординге в отдельный слот Keychain.
+        // Здесь строим URL синхронно из данных аккаунта как fallback.
+        // Реальный async-пробуждение произойдёт при первом обращении к provider.
+        let scheme = account.security == .none ? "http" : "https"
+        let ewsURL = URL(string: "\(scheme)://\(account.host)/EWS/Exchange.asmx")!
+        let client = EWSClient(ewsURL: ewsURL, username: account.username, password: "")
+        let provider = EWSAccountDataProvider(account: account, client: client)
+        // Пароль будет подставлен лениво при первом запросе через secrets.
+        // Для полноценного lazy-init нужен EWSAccountDataProvider.make(...) async,
+        // вызывается из AccountRegistry.session(for:) через Task — TODO в B-фазе EWS.
+        return provider
     }
 
     /// Собирает `SendProvider` для аккаунта. Возвращает `nil`, если режим
