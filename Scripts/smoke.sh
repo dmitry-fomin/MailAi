@@ -69,6 +69,9 @@ echo "▶ run SMTPProvider smoke (SMTP-3: SendProvider + LiveSendProvider)"
 echo "▶ run IMAP APPEND smoke (SMTP-4: APPEND command formatting)"
 (cd Packages/MailTransport && swift run IMAPAppendSmoke)
 
+echo "▶ run ServerSync smoke (AI-7: серверная синхронизация Important/Unimportant)"
+(cd Packages/AppShell && swift run ServerSyncSmoke)
+
 echo "▶ run StatusNotifications smoke (Status-3: badge + NL-фильтр)"
 (cd Packages/UI && swift run StatusNotificationsSmoke)
 

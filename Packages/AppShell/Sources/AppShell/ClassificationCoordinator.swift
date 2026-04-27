@@ -19,6 +19,11 @@ public actor ClassificationCoordinator {
     public let log: ClassificationLog
     public let queue: ClassificationQueue
     public let bodyFetcher: @Sendable (Message.ID) async throws -> (body: String, contentType: String)
+    /// AI-7: hook, вызываемый после успешной классификации. Получает ID письма
+    /// и вычисленный `Importance`. Используется для серверной синхронизации
+    /// (UID MOVE в MailAi/Important или MailAi/Unimportant). При выключенной
+    /// синхронизации hook == `nil` — никаких сетевых операций не выполняется.
+    public let postClassifyHook: (@Sendable (Message.ID, Importance) async -> Void)?
 
     public init(
         store: GRDBMetadataStore,
@@ -26,7 +31,8 @@ public actor ClassificationCoordinator {
         classifier: Classifier,
         log: ClassificationLog,
         queue: ClassificationQueue,
-        bodyFetcher: @escaping @Sendable (Message.ID) async throws -> (body: String, contentType: String)
+        bodyFetcher: @escaping @Sendable (Message.ID) async throws -> (body: String, contentType: String),
+        postClassifyHook: (@Sendable (Message.ID, Importance) async -> Void)? = nil
     ) {
         self.store = store
         self.rules = rules
@@ -34,6 +40,7 @@ public actor ClassificationCoordinator {
         self.log = log
         self.queue = queue
         self.bodyFetcher = bodyFetcher
+        self.postClassifyHook = postClassifyHook
     }
 
     public func enqueue(messageIDs: [Message.ID]) async {
@@ -48,6 +55,7 @@ public actor ClassificationCoordinator {
         let rules = self.rules
         let log = self.log
         let bodyFetcher = self.bodyFetcher
+        let hook = self.postClassifyHook
 
         await queue.processBatched { batchIDs in
             // Для каждого ID в батче — выполняем классификацию.
@@ -128,6 +136,9 @@ public actor ClassificationCoordinator {
                                     confidence: result.confidence,
                                     matchedRuleId: result.matchedRule
                                 ))
+                                if let hook {
+                                    await hook(id, result.importance)
+                                }
                             }
                             return (rawID, .success(()))
                         } catch {
@@ -159,6 +170,7 @@ public actor ClassificationCoordinator {
         let rules = self.rules
         let log = self.log
         let bodyFetcher = self.bodyFetcher
+        let hook = self.postClassifyHook
 
         await queue.processAll { rawID in
             let id = Message.ID(rawID)
@@ -192,6 +204,9 @@ public actor ClassificationCoordinator {
 
             if let result {
                 try await store.updateImportance(messageID: id, to: result.importance)
+                if let hook {
+                    await hook(id, result.importance)
+                }
             }
 
             let hash = Self.sha256(msg.messageID ?? msg.id.rawValue)

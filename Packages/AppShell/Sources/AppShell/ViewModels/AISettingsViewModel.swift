@@ -16,6 +16,8 @@ public final class AISettingsViewModel: ObservableObject {
     @Published public var aiPackEnabled: Bool = false
     @Published public var apiKey: String = ""
     @Published public var modelID: String = OpenRouterModelCatalog.defaultModelID
+    /// AI-7: per-account toggle серверной синхронизации Important/Unimportant папок.
+    @Published public var serverSyncEnabled: Bool = false
     @Published public private(set) var rules: [Rule] = []
     @Published public private(set) var isLoading: Bool = false
     @Published public private(set) var statusMessage: String?
@@ -52,6 +54,7 @@ public final class AISettingsViewModel: ObservableObject {
 
         aiPackEnabled = await settings.isEnabled(forAccount: accountID)
         modelID = await settings.modelID(forAccount: accountID)
+        serverSyncEnabled = await settings.serverSyncEnabled(forAccount: accountID)
         do {
             apiKey = try await secrets.openRouterKey(forAccount: accountID) ?? ""
         } catch {
@@ -71,6 +74,11 @@ public final class AISettingsViewModel: ObservableObject {
     public func setModelID(_ id: String) async {
         modelID = id
         await settings.setModelID(id, forAccount: accountID)
+    }
+
+    public func setServerSyncEnabled(_ enabled: Bool) async {
+        serverSyncEnabled = enabled
+        await settings.setServerSyncEnabled(enabled, forAccount: accountID)
     }
 
     public func saveAPIKey() async {

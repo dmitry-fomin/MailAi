@@ -396,6 +396,80 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
         try await setFlag(.flagged, on: messageID, enabled: flagged)
     }
 
+    // MARK: - AI-7: серверная синхронизация Important/Unimportant
+
+    /// Кэш состояния серверных папок: были ли они уже созданы/проверены в
+    /// текущей жизни провайдера. Перезаполняется через `ensureServerFolders()`.
+    /// Кэш только в памяти; при следующем старте app пересоздастся.
+    private var serverFoldersEnsured: Set<IMAPServerFolderSync.Target> = []
+
+    /// Кэш разделителя иерархии IMAP namespace. `nil` — ещё не запрашивали.
+    private var cachedHierarchyDelimiter: String??
+
+    /// Возвращает разделитель иерархии IMAP. Предпочитает делимитер `INBOX`,
+    /// fallback на `/`. Кэшируется в рамках жизни провайдера.
+    private func hierarchyDelimiter() async throws -> String {
+        if let cached = cachedHierarchyDelimiter, let value = cached {
+            return value
+        }
+        let sess = try await ensureSession()
+        let entries = try await sess.list()
+        // INBOX гарантированно есть на любом IMAP-сервере; берём его делимитер.
+        let inbox = entries.first { $0.path.uppercased() == "INBOX" }
+        let delim = inbox?.delimiter ?? entries.first?.delimiter ?? "/"
+        cachedHierarchyDelimiter = .some(delim)
+        return delim
+    }
+
+    /// Создаёт серверные папки `MailAi/Important` и `MailAi/Unimportant`,
+    /// если их ещё нет. Идемпотентно: ошибку «уже существует» считает успехом.
+    /// Backfill старых писем не делает.
+    public func ensureServerFolders() async throws {
+        let delim = try await hierarchyDelimiter()
+        let sess = try await ensureSession()
+        for target in IMAPServerFolderSync.Target.allCases {
+            if serverFoldersEnsured.contains(target) { continue }
+            let path = IMAPServerFolderSync.path(for: target, delimiter: delim)
+            do {
+                try await sess.createMailbox(path)
+            } catch IMAPConnection.CreateMailboxError.alreadyExists {
+                // OK — папка уже есть.
+            } catch IMAPConnection.CreateMailboxError.failed {
+                // Не падаем: пользователь увидит, что MOVE не сработает,
+                // в логах статус-бара. Не блокируем классификацию.
+                continue
+            }
+            serverFoldersEnsured.insert(target)
+        }
+    }
+
+    /// Переносит сообщение в серверную папку `MailAi/Important` или
+    /// `MailAi/Unimportant` после классификации. Использует UID MOVE,
+    /// fallback — COPY+STORE+EXPUNGE для серверов без MOVE.
+    /// Если папка ещё не создана — создаёт её перед перемещением.
+    public func moveAfterClassification(
+        messageID: Message.ID,
+        target: IMAPServerFolderSync.Target
+    ) async throws {
+        guard let record = try await store.message(id: messageID) else {
+            throw MailError.messageNotFound(messageID)
+        }
+        try await ensureServerFolders()
+        let delim = try await hierarchyDelimiter()
+        let destination = IMAPServerFolderSync.path(for: target, delimiter: delim)
+        let sess = try await ensureSession()
+        _ = try await sess.select(record.mailboxID.rawValue)
+        let caps = try await sess.capability()
+        let hasMove = caps.contains { $0.uppercased() == "MOVE" }
+        if hasMove {
+            try await sess.uidMove(uid: record.uid, to: destination)
+        } else {
+            try await sess.uidMoveFallback(uid: record.uid, to: destination)
+        }
+        // После MOVE метаданные исходной папки невалидны — стираем.
+        try await store.delete(messageIDs: [messageID])
+    }
+
     // MARK: - SMTP-4: черновики
 
     /// Сохраняет черновик через IMAP APPEND в папку с `role == .drafts`.

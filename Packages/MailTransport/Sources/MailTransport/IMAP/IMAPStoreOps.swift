@@ -75,6 +75,37 @@ extension IMAPConnection {
         try Self.assertOK(result.tagged)
     }
 
+    // MARK: - Mailbox lifecycle (RFC 3501 §6.3.3)
+
+    /// Ошибка создания mailbox с разделением «уже существует» / прочие.
+    public enum CreateMailboxError: Error, Equatable, Sendable {
+        /// Сервер ответил `NO`/`BAD` с текстом, указывающим на «уже существует».
+        case alreadyExists(text: String)
+        /// Любая другая ошибка протокола.
+        case failed(status: IMAPResponseStatus, text: String)
+    }
+
+    /// CREATE <mailbox> — создаёт почтовый ящик (RFC 3501 §6.3.3).
+    ///
+    /// Если сервер вернул `NO`/`BAD` с текстом, содержащим «exists» (любой
+    /// регистр), бросается `CreateMailboxError.alreadyExists`. Это позволяет
+    /// вызывающему обрабатывать идемпотентно: «создаём, если ещё нет».
+    ///
+    /// Имя mailbox-а передаётся в кавычках (`Self.quote`), что покрывает
+    /// иерархические разделители (`/` или `.`) и UTF-8 при условии, что
+    /// сервер заявил `UTF8=ACCEPT`. Для строгого RFC 3501 имена должны быть
+    /// в modified UTF-7 — это TODO для не-UTF8 серверов.
+    public func create(mailbox: String) async throws {
+        let cmd = "CREATE \(Self.quote(mailbox))"
+        let result = try await execute(cmd)
+        if result.tagged.status == .ok { return }
+        let lower = result.tagged.text.lowercased()
+        if lower.contains("exists") || lower.contains("already") {
+            throw CreateMailboxError.alreadyExists(text: result.tagged.text)
+        }
+        throw CreateMailboxError.failed(status: result.tagged.status, text: result.tagged.text)
+    }
+
     // MARK: - Helpers
 
     private static func assertOK(_ tagged: IMAPTaggedResponse) throws {

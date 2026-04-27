@@ -163,6 +163,7 @@ private struct AIPackSettingsView: View {
             enableSection
             keySection
             modelSection
+            serverSyncSection
             rulesSection
             if let status = model.statusMessage, !status.isEmpty {
                 Section {
@@ -245,6 +246,26 @@ private struct AIPackSettingsView: View {
             Text("Используется для классификации входящих писем.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var serverSyncSection: some View {
+        Section("Серверная синхронизация") {
+            Toggle(isOn: Binding(
+                get: { model.serverSyncEnabled },
+                set: { newValue in
+                    Task { await model.setServerSyncEnabled(newValue) }
+                }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Синхронизировать с сервером (Important/Unimportant папки)")
+                    Text("После классификации новые письма переносятся в серверные папки MailAi/Important и MailAi/Unimportant. Старые письма не перемещаются.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .disabled(!model.aiPackEnabled)
         }
     }
 
