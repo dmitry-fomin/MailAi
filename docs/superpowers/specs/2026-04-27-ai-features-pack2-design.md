@@ -1,0 +1,479 @@
+# Дизайн: AI Feature Pack 2
+
+Дата: 2026-04-27. Статус: draft.
+
+Расширяет существующий AI-pack (классификация Important/Unimportant + правила)
+восемью новыми сценариями. Все используют один `AIProvider` (OpenRouter).
+
+## Общие принципы
+
+1. **Privacy = конституция**: тело письма отправляется в AI только при явном
+   действии пользователя (кнопка, подтверждение). Результаты кешируются по
+   SHA-256 хешу тела — не по самому телу.
+2. **Один AIProvider**: все 8 фич делят `OpenRouterClient`, модель выбирается
+   в Settings. Для тяжёлых задач (перевод, bulk-delete) можно override модели
+   на более мощную.
+3. **Streaming**: ответы приходят по SSE, UI показывает typing-индикатор.
+4. **Cancel**: любая AI-операция отменяема через `Task.cancel()`.
+5. **Кеширование в Storage**: таблица `ai_cache` — key=SHA-256(prompt), value=JSON
+   результат, expires_at. Тела нет, только результат. TTL: суммаризация 7 дней,
+   сниппет 30 дней, категории 14 дней.
+
+---
+
+## A. Суммаризация треда
+
+### Суть
+Кнопка «Суммаризовать» в reader header. AI анализирует все письма треда
+(до 10 последних) и выдаёт 2-3 предложения: кто, что, какие решения.
+
+### Протокол (расширение Core)
+```swift
+// Core/Protocols/AIProvider.swift — добавить
+public protocol AISummarizer: Sendable {
+    func summarize(messages: [MessageSummaryInput]) async throws -> Summary
+}
+
+public struct MessageSummaryInput: Sendable {
+    public let from: String
+    public let date: Date
+    public let bodySnippet: String  // 300 chars
+}
+
+public struct Summary: Sendable, Identifiable {
+    public let id: UUID
+    public let text: String          // 2-3 предложения
+    public let participants: [String] // уникальные отправители
+    public let keyPoints: [String]    // 1-3 bullet points
+    public let tokensIn: Int
+    public let tokensOut: Int
+}
+```
+
+### Промпт (SummarizeV1)
+System: «Ты — ассистент почты. Суммаризуй переписку в 2-3 предложения.
+Выдели: кто участвовал, что обсуждали, какие решения приняты.
+Формат: JSON {summary, participants, keyPoints}»
+User: хронологический список сообщений (from, date, snippet 300 chars).
+
+### UI
+- Кнопка «✨ Суммаризовать» в ReaderHeaderView (рядом с датой).
+- Нажатие → streaming ответ → показывается в карточке над телом письма.
+- Повторный клик — свернуть/развернуть.
+- Результат кешируется по SHA-256(messageIDs + bodies).
+
+### Storage
+Таблица `ai_cache`:
+```
+id TEXT PK, feature TEXT NOT NULL,  -- 'summary'
+cache_key TEXT NOT NULL,            -- SHA-256(message_ids joined)
+result_json TEXT NOT NULL,          -- {summary, participants, keyPoints}
+created_at DATETIME NOT NULL,
+expires_at DATETIME NOT NULL
+```
+
+---
+
+## B. Quick Reply (быстрый ответ)
+
+### Суть
+Кнопка в reader → AI генерирует 3 варианта короткого ответа (до 50 слов).
+Пользователь выбирает один → подставляется в ComposeScene.
+
+### Протокол
+```swift
+public protocol AIQuickReplier: Sendable {
+    func suggestReplies(
+        originalMessage: MessageSummaryInput,
+        tone: ReplyTone
+    ) async throws -> [ReplySuggestion]
+}
+
+public enum ReplyTone: String, Sendable, CaseIterable {
+    case formal, friendly, concise
+}
+
+public struct ReplySuggestion: Sendable, Identifiable {
+    public let id: UUID
+    public let text: String       // до 50 слов
+    public let tone: ReplyTone
+}
+```
+
+### Промпт
+System: «Ты — ассистент почты. Предложи 3 варианта короткого ответа
+(до 50 слов каждый) на письмо. Тон: {tone}. Формат: JSON {replies: [{text, tone}]}»
+User: from + subject + body snippet (300 chars) оригинала.
+
+### UI
+- Кнопка «⚡ Ответить» в ReaderToolbar (рядом с обычной reply).
+- Нажатие → popover с 3 вариантами + selector тона (formal/friendly/concise).
+- Клик на вариант → открывается ComposeScene с предзаполненным телом.
+- Результат НЕ кешируется (контекстуальный).
+
+---
+
+## C. AI-сниппет для списка писем
+
+### Суть
+Вместо `preview` (первые 150 символов тела) — AI-генерированная однострочная
+выжимка. Показывается в `MessageRowView`. Кешируется.
+
+### Протокол
+```swift
+public protocol AISnippetGenerator: Sendable {
+    func generateSnippet(input: ClassificationInput) async throws -> String
+}
+```
+
+### Промпт
+System: «Создай однострочную выжимку письма (до 80 символов) для preview
+в списке писем. Только суть, без воды. Формат: plain text, одна строка.»
+User: те же поля что ClassificationInput.
+
+### UI
+- `MessageRowView`: если `message.aiSnippet != nil` — показываем его вместо
+  `message.preview`. Шрифт — secondary, italic.
+- Генерация: batch в фоне при первой загрузке писем (через ClassificationQueue).
+- Toggle в Settings: «AI-превью писем» (по умолчанию off — стоит токены).
+
+### Storage
+Колонка `ai_snippet` в таблице `message` (SchemaV4). TEXT, nullable.
+Кеш в `ai_cache` с feature='snippet'.
+
+---
+
+## E. Bulk-delete advisor
+
+### Суть
+Пользователь пишет запрос: «Удали все рассылки за полгода» / «Удали маркетинг».
+AI анализирует метаданные писем, отмечает кандидатов, пользователь подтверждает.
+
+### Протокол
+```swift
+public protocol AIBulkAdvisor: Sendable {
+    func suggestBulkAction(
+        query: String,
+        candidates: [BulkCandidate]
+    ) async throws -> BulkActionPlan
+}
+
+public struct BulkCandidate: Sendable {
+    public let messageID: Message.ID
+    public let from: String
+    public let subject: String
+    public let date: Date
+    public let importance: Importance
+}
+
+public struct BulkActionPlan: Sendable, Identifiable {
+    public let id: UUID
+    public let query: String
+    public let messageIDs: [Message.ID]
+    public let reasoning: String
+    public let count: Int
+}
+```
+
+### Промпт
+System: «Ты — ассистент очистки почты. Пользователь просит удалить письма.
+Верни JSON {message_ids: [...], reasoning, count}. Удаляй только если
+уверен. Если сомневаешься — не включай.»
+User: запрос + массив (from, subject, date, importance) до 200 писем.
+
+### UI
+- Отдельное окно/panel: текстовое поле «Что удалить?» + кнопка «Найти».
+- Результат: список писем с чекбоксами + reasoning.
+- Кнопка «Удалить N писем» → подтверждение → массовый UID STORE + EXPUNGE.
+- Двухшаговый: AI предлагает → пользователь подтверждает. Без подтверждения
+  удаление запрещено (конституция).
+
+---
+
+## G. Перевод письма
+
+### Суть
+Кнопка «Перевести» в reader → AI переводит тело на язык интерфейса.
+Результат временный — не пишется на диск.
+
+### Протокол
+```swift
+public protocol AITranslator: Sendable {
+    func translate(
+        body: String,
+        contentType: String,
+        targetLanguage: String
+    ) async throws -> Translation
+}
+
+public struct Translation: Sendable, Identifiable {
+    public let id: UUID
+    public let text: String
+    public let detectedLanguage: String
+    public let targetLanguage: String
+}
+```
+
+### Промпт
+System: «Переведи текст письма на {targetLanguage}. Сохрани форматирование.
+Определи исходный язык. JSON: {text, detectedLanguage, targetLanguage}»
+User: полное тело письма (plain text после strip HTML).
+
+### UI
+- Кнопка «🌐 Перевести» в ReaderToolbar.
+- Нажатие → streaming → показывается переведённый текст вместо оригинала.
+- Toggle «Оригинал / Перевод» для переключения.
+- Тело загружается по требованию (уже есть `body(for:)`).
+- Перевод живёт ТОЛЬКО в @State, на диск не пишется (приватность!).
+
+### Важно: тело в AI
+Это единственная фича, где ПОЛНОЕ тело уходит в AI. Подтверждается кнопкой.
+Никакого автоперевода — только по клику.
+
+---
+
+## H. Извлечение действий (Action Items)
+
+### Суть
+AI парсит письмо и вытаскивает: дедлайны, задачи, встречи, ссылки.
+Показывает как чек-лист над телом письма.
+
+### Протокол
+```swift
+public protocol AIActionExtractor: Sendable {
+    func extractActions(
+        from message: MessageSummaryInput
+    ) async throws -> [ActionItem]
+}
+
+public enum ActionKind: String, Sendable, Codable {
+    case deadline, task, meeting, link, question
+}
+
+public struct ActionItem: Sendable, Identifiable, Codable {
+    public let id: UUID
+    public let kind: ActionKind
+    public let text: String
+    public let dueDate: Date?
+    public let isCompleted: Bool
+}
+```
+
+### Промпт
+System: «Извлеки действия из письма: дедлайны, задачи, встречи, важные ссылки,
+вопросы требующие ответа. JSON: {actions: [{kind, text, dueDate}]}»
+User: from + subject + body snippet (300 chars).
+
+### UI
+- Кнопка «📋 Действия» в ReaderToolbar.
+- Результат: collapsible карточка над телом с чек-листом.
+- Чекбоксы — локальное состояние, можно отметить «выполнено».
+- Кешируется в `ai_cache` по SHA-256(message_id + body).
+
+---
+
+## I. Категории писем (AI Labels)
+
+### Суть
+Авто-лайблинг: Finance, Travel, Social, Work, Legal, Receipt, Notification,
+Personal. В sidebar секция «Категории» с папками.
+
+### Протокол
+```swift
+public enum MessageCategory: String, Sendable, Codable, CaseIterable {
+    case work, finance, travel, social, legal
+    case receipt, notification, personal, marketing, other
+}
+
+// Расширение ClassificationResult:
+public struct ClassificationResult {
+    // ... existing fields ...
+    public var category: MessageCategory?
+    public var language: String?      // iso 639-1
+    public var tone: MessageTone?
+}
+
+public enum MessageTone: String, Sendable, Codable {
+    case urgent, formal, friendly, neutral, marketing
+}
+```
+
+### Промпт
+Расширение ClassifyV1: добавляем в JSON-ответ поля category, language, tone.
+Один вызов — все три поля. Cost: ~20 доп. токенов на ответ.
+
+### UI
+- Sidebar: секция «Категории» с иконками и счётчиками.
+- MessageRowView: бейдж категории слева (маленький цветной dot).
+- Filter: клик по категории фильтрует текущий список.
+- Settings: toggle «AI-категории» (по умолчанию off).
+
+### Storage
+Колонки в `message`: `category TEXT` и `tone TEXT` (SchemaV4).
+
+---
+
+## J. Snooze с AI-подсказкой
+
+### Суть
+«Напомнить когда...» → AI определяет из текста письма дату/событие
+и предлагает snooze до нужного момента.
+
+### Протокол
+```swift
+public protocol AISnoozeSuggester: Sendable {
+    func suggestSnooze(
+        message: MessageSummaryInput
+    ) async throws -> SnoozeSuggestion?
+}
+
+public struct SnoozeSuggestion: Sendable {
+    public let suggestedDate: Date
+    public let reason: String  // «Дедлайн проекта 15 мая»
+}
+```
+
+### Промпт
+System: «Проанализируй письмо. Если есть конкретная дата, дедлайн,
+запланированное событие — предложи когда напомнить. Если нет — верни null.
+JSON: {suggestedDate: ISO8601 или null, reason: string или null}»
+
+### UI
+- Контекстное меню на письме: «⏰ Напомнить...»
+- Если AI нашёл дату → показывает suggestion «Напомнить 15 мая (дедлайн)».
+- Ручной snooze: date picker + пресеты (завтра, через 3 дня, через неделю).
+- Snoozed письма убираются из списка, возвращаются в назначенное время.
+
+### Storage
+Таблица `snoozed_messages`:
+```
+message_id TEXT PK, snooze_until DATETIME NOT NULL,
+original_mailbox_id TEXT NOT NULL, created_at DATETIME NOT NULL
+```
+
+### Механизм
+Timer/fetch каждые 5 минут → если `snooze_until <= now` → вернуть письмо
+в список + показать уведомление.
+
+---
+
+## K. Контактная книга AI
+
+### Суть
+AI строит профили отправителей: частота, темы, среднее время ответа,
+последний контакт. Доступно из контекстного меню на отправителе.
+
+### Протокол
+```swift
+public struct SenderProfile: Sendable, Identifiable {
+    public let id: String  // email address
+    public let name: String?
+    public let totalMessages: Int
+    public let lastContactDate: Date?
+    public let avgResponseHours: Double?
+    public let topTopics: [String]      // до 5
+    public let importance: Importance   // aggregated
+    public let categoryBreakdown: [MessageCategory: Int]
+}
+
+public protocol AIContactProfiler: Sendable {
+    func profile(for address: String, messages: [Message]) async throws -> SenderProfile
+}
+```
+
+### Реализация
+- НЕ делает дополнительных запросов к AI.
+- Агрегирует из существующих данных: `message` (from, subject, date, importance, category).
+- `topTopics`: берём 5 самых частых слов из subject'ов (после стоп-слов) —
+  без AI, TF-IDF локально. Быстро, без токенов.
+- `avgResponseHours`: если есть треды — разница между датами ответов.
+
+### UI
+- Клик на аватар/имя отправителя в ReaderHeaderView → popover с профилем.
+- Показывает: имя, email, N писем, последний контакт, топ-3 темы,
+  метка Important/Unimportant.
+- Кнопка «Все письма от...» → фильтр в списке.
+
+### Storage
+Никаких новых таблиц — запросы на лету из `message`.
+Опциональный кеш: `ai_cache` с feature='profile', key=SHA-256(email).
+
+---
+
+## Storage SchemaV4 (миграция)
+
+```sql
+-- Новые колонки в message
+ALTER TABLE message ADD COLUMN ai_snippet TEXT;
+ALTER TABLE message ADD COLUMN category TEXT;
+ALTER TABLE message ADD COLUMN tone TEXT;
+
+-- Кеш AI-результатов
+CREATE TABLE ai_cache (
+    id TEXT PRIMARY KEY NOT NULL,
+    feature TEXT NOT NULL,          -- 'summary', 'snippet', 'actions', 'profile'
+    cache_key TEXT NOT NULL,        -- SHA-256(prompt inputs)
+    result_json TEXT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME NOT NULL
+);
+CREATE INDEX idx_ai_cache_lookup ON ai_cache(feature, cache_key);
+
+-- Snooze
+CREATE TABLE snoozed_messages (
+    message_id TEXT PRIMARY KEY NOT NULL,
+    snooze_until DATETIME NOT NULL,
+    original_mailbox_id TEXT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_snooze_until ON snoozed_messages(snooze_until);
+```
+
+## Порядок реализации
+
+Фаза 1 (ядро):
+1. **SchemaV4** — миграция + ai_cache
+2. **A: Суммаризация** — killer feature, протокол заглушка уже есть
+3. **H: Action Items** — маленький промпт, большой value
+
+Фаза 2 (productivity):
+4. **B: Quick Reply** — wow-эффект
+5. **I: Категории** — расширение ClassifyV1 (бесплатно)
+6. **E: Bulk-delete** — двухшаговый, самый сложный UI
+
+Фаза 3 (nice-to-have):
+7. **G: Перевод** — простое, но полное тело в AI
+8. **C: AI-сниппет** — batch, затратный по токенам
+9. **J: Snooze** — новая механика (timer, возврат)
+10. **K: Профили** — агрегация без AI-запросов
+
+## Зависимости
+
+```
+SchemaV4 ──→ A (summary), B (quick reply), C (snippet),
+             E (bulk), H (actions), I (categories)
+
+A (summary) ──→ независима
+B (quick reply) ──→ зависит от Compose integration
+C (snippet) ──→ зависит от SchemaV4 (колонка ai_snippet)
+E (bulk-delete) ──→ зависит от MailActionsProvider.delete
+G (translate) ──→ независима
+H (actions) ──→ зависит от SchemaV4
+I (categories) ──→ расширение Classifier (один вызов)
+J (snooze) ──→ зависит от SchemaV4 + timer mechanism
+K (profiles) ──→ независима (чистая агрегация)
+```
+
+## Cost estimation (per 100 писем)
+
+| Фича | Токенов в | Токенов из | Cost (DeepSeek) |
+|---|---|---|---|
+| A: Summary | ~800 | ~150 | $0.001 |
+| B: Quick Reply | ~400 | ~200 | $0.001 |
+| C: Snippet | ~200 | ~30 | $0.0003 |
+| E: Bulk-delete | ~2000 | ~300 | $0.003 |
+| G: Translate | ~2000 | ~2000 | $0.005 |
+| H: Actions | ~400 | ~150 | $0.001 |
+| I: Categories | +20 | +10 | $0.0002 |
+| J: Snooze | ~300 | ~50 | $0.0005 |
+| K: Profiles | 0 | 0 | $0 (local) |
