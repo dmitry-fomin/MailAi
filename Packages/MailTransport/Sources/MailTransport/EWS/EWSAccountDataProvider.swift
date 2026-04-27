@@ -62,6 +62,7 @@ public final class EWSAccountDataProvider: AccountDataProvider, MailActionsProvi
                             offset: page.offset,
                             maxCount: page.limit
                         )
+                        await self.cacheItemRefs(result.items, in: mailboxID)
                         let msgs = result.items.map { self.makeMessage(from: $0, mailboxID: mailboxID) }
                         continuation.yield(msgs)
                         continuation.finish()
@@ -72,6 +73,7 @@ public final class EWSAccountDataProvider: AccountDataProvider, MailActionsProvi
                         offset: page.offset,
                         maxCount: page.limit
                     )
+                    await self.cacheItemRefs(result.items, in: mailboxID)
                     let msgs = result.items.map { self.makeMessage(from: $0, mailboxID: mailboxID) }
                     continuation.yield(msgs)
                     continuation.finish()

@@ -576,6 +576,7 @@ public struct AccountWindowScene: View {
     private var selectedMessage: Message? {
         guard let id = session.selectedMessageID else { return nil }
         return session.messages.first(where: { $0.id == id })
+            ?? session.searchResults.first(where: { $0.id == id })
     }
 
     // MARK: - AI-5 drag-to-rule
