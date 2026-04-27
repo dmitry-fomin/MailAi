@@ -4,13 +4,18 @@ import Core
 public struct SidebarView: View {
     @ObservedObject var viewModel: SidebarViewModel
     var onSelect: (SidebarItem) -> Void
+    /// AI-5: drop сообщений на «Неважно» / «Важное». Получает массив
+    /// `DraggableMessage` и kind целевого item'а.
+    var onDropMessages: ((SidebarItem.Kind, [DraggableMessage]) -> Void)?
 
     public init(
         viewModel: SidebarViewModel,
-        onSelect: @escaping (SidebarItem) -> Void
+        onSelect: @escaping (SidebarItem) -> Void,
+        onDropMessages: ((SidebarItem.Kind, [DraggableMessage]) -> Void)? = nil
     ) {
         self.viewModel = viewModel
         self.onSelect = onSelect
+        self.onDropMessages = onDropMessages
     }
 
     public var body: some View {
@@ -26,13 +31,29 @@ public struct SidebarView: View {
             ForEach(viewModel.sections) { section in
                 Section(section.title) {
                     ForEach(section.items) { item in
-                        SidebarRow(item: item)
+                        rowView(for: item)
                             .tag(item.id as SidebarItem.ID?)
                     }
                 }
             }
         }
         .listStyle(.sidebar)
+    }
+
+    @ViewBuilder
+    private func rowView(for item: SidebarItem) -> some View {
+        let row = SidebarRow(item: item)
+        switch item.kind {
+        case .smartUnimportant, .smartImportant:
+            row
+                .dropDestination(for: DraggableMessage.self) { dropped, _ in
+                    guard !dropped.isEmpty else { return false }
+                    onDropMessages?(item.kind, dropped)
+                    return true
+                }
+        default:
+            row
+        }
     }
 }
 

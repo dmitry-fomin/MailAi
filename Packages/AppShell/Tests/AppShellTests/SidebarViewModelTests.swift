@@ -36,13 +36,16 @@ final class SidebarViewModelTests: XCTestCase {
         )
     }
 
-    func testRebuildProducesFourSections() async {
+    func testRebuildProducesFiveSections() async {
         let vm = SidebarViewModel(account: makeAccount())
         await vm.rebuild(with: [
             makeMailbox(id: "inbox", name: "INBOX", role: .inbox, unread: 3),
             makeMailbox(id: "sent", name: "Sent", role: .sent)
         ])
-        XCTAssertEqual(vm.sections.map(\.id), [.favorites, .smartBoxes, .onMyMac, .account])
+        XCTAssertEqual(
+            vm.sections.map(\.id),
+            [.favorites, .filtered, .smartBoxes, .onMyMac, .account]
+        )
         XCTAssertEqual(vm.sections.last?.title, "user@example.com")
     }
 
@@ -137,6 +140,62 @@ final class SidebarViewModelTests: XCTestCase {
         let local = vm.sections.first(where: { $0.id == .onMyMac })
         XCTAssertEqual(local?.title, "На моём Mac")
         XCTAssertFalse(local?.items.isEmpty ?? true)
+    }
+
+    private func makeMessage(
+        id: String,
+        importance: Importance,
+        mailboxID: String = "inbox"
+    ) -> Message {
+        Message(
+            id: .init(id),
+            accountID: .init("acc-1"),
+            mailboxID: .init(mailboxID),
+            uid: 0,
+            messageID: nil,
+            threadID: nil,
+            subject: "s",
+            from: nil,
+            to: [],
+            cc: [],
+            date: Date(),
+            preview: nil,
+            size: 0,
+            flags: [],
+            importance: importance
+        )
+    }
+
+    func testFilteredCountersMatchImportance() async {
+        let vm = SidebarViewModel(account: makeAccount())
+        await vm.rebuild(
+            with: [makeMailbox(id: "inbox", name: "INBOX", role: .inbox)],
+            messages: [
+                makeMessage(id: "1", importance: .important),
+                makeMessage(id: "2", importance: .important),
+                makeMessage(id: "3", importance: .unimportant),
+                makeMessage(id: "4", importance: .unknown)
+            ]
+        )
+        let filtered = vm.sections.first(where: { $0.id == .filtered })
+        XCTAssertNotNil(filtered)
+        let important = filtered?.items.first(where: {
+            if case .smartImportant = $0.kind { return true }
+            return false
+        })
+        let unimportant = filtered?.items.first(where: {
+            if case .smartUnimportant = $0.kind { return true }
+            return false
+        })
+        XCTAssertEqual(important?.unreadCount, 2)
+        XCTAssertEqual(unimportant?.unreadCount, 1)
+    }
+
+    func testFilteredCountersAreZeroWhenNoMessages() async {
+        let vm = SidebarViewModel(account: makeAccount())
+        await vm.rebuild(with: [makeMailbox(id: "inbox", name: "INBOX", role: .inbox)])
+        let filtered = vm.sections.first(where: { $0.id == .filtered })
+        XCTAssertEqual(filtered?.items.allSatisfy { $0.unreadCount == 0 }, true)
     }
 
     func testMailboxIDForNonMailboxItemReturnsNil() async {

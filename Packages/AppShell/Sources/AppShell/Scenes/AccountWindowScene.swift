@@ -1,15 +1,24 @@
 import SwiftUI
 import Core
 import UI
+import AI
 
 public struct AccountWindowScene: View {
     @ObservedObject var session: AccountSessionModel
     @StateObject private var sidebar: SidebarViewModel
+    @StateObject private var classificationProgress: ClassificationProgressViewModel
 
     /// A6: зоны клавиатурного фокуса окна. Tab циклирует их в порядке
     /// sidebar → list → reader. ⌘1 / ⌘2 переводят фокус в sidebar / list
     /// напрямую.
     @FocusState private var focus: FocusZone?
+
+    /// AI-5: pending-предложение нового правила (после drop письма на
+    /// «Неважно» / «Важное»). nil — лист не показан.
+    @State private var ruleProposal: RuleProposal?
+
+    /// AI-5: short toast после успешного создания правила.
+    @State private var ruleConfirmation: String?
 
     public enum FocusZone: Hashable {
         case sidebar
@@ -17,22 +26,33 @@ public struct AccountWindowScene: View {
         case reader
     }
 
+    private struct RuleProposal: Identifiable {
+        let id = UUID()
+        let messages: [DraggableMessage]
+        let mode: RuleProposalSheet.Mode
+    }
+
     public init(session: AccountSessionModel) {
         self.session = session
         _sidebar = StateObject(wrappedValue: SidebarViewModel(account: session.account))
+        _classificationProgress = StateObject(wrappedValue: ClassificationProgressViewModel())
     }
 
     public var body: some View {
         NavigationSplitView {
-            SidebarView(viewModel: sidebar) { item in
-                handleSelection(item)
-            }
+            SidebarView(
+                viewModel: sidebar,
+                onSelect: { item in handleSelection(item) },
+                onDropMessages: { kind, dropped in
+                    handleDrop(onKind: kind, messages: dropped)
+                }
+            )
             .frame(minWidth: 220)
             .focused($focus, equals: .sidebar)
         } content: {
             Group {
                 if let kind = selectedAIPackKind {
-                    aiPackEmptyState(for: kind)
+                    filteredMessageList(for: kind)
                 } else {
                     messageList
                 }
@@ -48,20 +68,55 @@ public struct AccountWindowScene: View {
         .background(shortcutsBackground)
         .task {
             await session.loadMailboxes()
-            await sidebar.rebuild(with: session.mailboxes)
+            await rebuildSidebar()
             if let mailboxID = sidebar.mailboxID(for: sidebar.selectedItemID) {
                 session.selectedMailboxID = mailboxID
                 await session.loadMessages(for: mailboxID)
             }
+            // AI-5: подписка прогресс-бара на снапшоты очереди.
+            if let queue = session.classificationQueue {
+                classificationProgress.bind(to: queue)
+            }
             // Стартовый фокус — в списке писем.
             if focus == nil { focus = .list }
         }
-        .onChange(of: session.mailboxes) { _, newValue in
-            Task { await sidebar.rebuild(with: newValue) }
+        .onChange(of: session.mailboxes) { _, _ in
+            Task { await rebuildSidebar() }
+        }
+        .onChange(of: session.messages) { _, _ in
+            // AI-5: счётчики «Отфильтрованных» обновляются реактивно.
+            Task { await rebuildSidebar() }
         }
         .onDisappear {
+            classificationProgress.unbind()
             session.closeSession()
         }
+        .sheet(item: $ruleProposal) { proposal in
+            RuleProposalSheet(
+                messages: proposal.messages,
+                mode: proposal.mode,
+                onConfirm: { rule in
+                    await saveRule(rule)
+                    ruleProposal = nil
+                },
+                onCancel: { ruleProposal = nil }
+            )
+        }
+        .overlay(alignment: .bottom) {
+            if let toast = ruleConfirmation {
+                Text(toast)
+                    .font(.callout)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.thinMaterial, in: Capsule())
+                    .padding(.bottom, 14)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+    }
+
+    private func rebuildSidebar() async {
+        await sidebar.rebuild(with: session.mailboxes, messages: session.messages)
     }
 
     private func handleSelection(_ item: SidebarItem) {
@@ -69,12 +124,11 @@ public struct AccountWindowScene: View {
             session.selectedMailboxID = mailboxID
             Task { await session.loadMessages(for: mailboxID) }
         }
-        // smartImportant/smartUnimportant — AI-pack scaffolding, список пуст.
-        // selectedItemID уже меняется во VM; отдельной загрузки не делаем.
+        // smartImportant/smartUnimportant — фильтруют текущий список
+        // по `message.importance`. Загрузка не нужна.
     }
 
-    /// AI-pack v1: если выбрана папка «Важное»/«Неважно», список писем
-    /// подменяется на empty-state с подсказкой включить AI-pack.
+    /// AI-5: kind активной AI-папки, если выбрана.
     private var selectedAIPackKind: SidebarItem.Kind? {
         guard let id = sidebar.selectedItemID,
               let item = sidebar.item(for: id) else { return nil }
@@ -86,25 +140,69 @@ public struct AccountWindowScene: View {
         }
     }
 
-    private func aiPackEmptyState(for kind: SidebarItem.Kind) -> some View {
+    // MARK: - AI-5 filtered list
+
+    private struct FilteredSpec {
+        let target: Importance
         let title: String
         let icon: String
+    }
+
+    private func filteredSpec(for kind: SidebarItem.Kind) -> FilteredSpec {
         switch kind {
         case .smartImportant:
-            title = "Важное"
-            icon = "exclamationmark.circle"
+            return FilteredSpec(target: .important, title: "Важное", icon: "exclamationmark.circle")
         case .smartUnimportant:
-            title = "Неважно"
-            icon = "archivebox"
+            return FilteredSpec(target: .unimportant, title: "Неважно", icon: "archivebox")
         default:
-            title = ""
-            icon = "tray"
+            return FilteredSpec(target: .unknown, title: "", icon: "tray")
         }
-        return ContentUnavailableView(
-            title,
-            systemImage: icon,
-            description: Text("AI-классификация пока недоступна. Включите AI-pack в настройках, чтобы эта папка начала заполняться автоматически.")
-        )
+    }
+
+    @ViewBuilder
+    private func filteredMessageList(for kind: SidebarItem.Kind) -> some View {
+        let spec = filteredSpec(for: kind)
+        let filtered = session.messages.filter { $0.importance == spec.target }
+
+        VStack(alignment: .leading, spacing: 0) {
+            filteredHeader(title: spec.title, count: filtered.count)
+            progressBar
+            Divider()
+            if filtered.isEmpty {
+                ContentUnavailableView(
+                    spec.title,
+                    systemImage: spec.icon,
+                    description: Text("Папка пока пуста. Когда AI-классификация отметит письма, они появятся здесь.")
+                )
+            } else {
+                List(selection: Binding(
+                    get: { session.selectedMessageID },
+                    set: { id in
+                        session.selectedMessageID = id
+                        session.open(messageID: id)
+                    }
+                )) {
+                    ForEach(filtered) { message in
+                        draggableRow(for: message)
+                            .tag(message.id as Message.ID?)
+                            .id(message.id)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func filteredHeader(title: String, count: Int) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline)
+                Text("\(count) писем").font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     // MARK: - Message list
@@ -112,9 +210,7 @@ public struct AccountWindowScene: View {
     @ViewBuilder private var messageList: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            // AI-pack v1: collapsed-слот прогресс-бара фоновой классификации.
-            // Управляется отдельной VM в AI-pack; в v1 isActive=false.
-            ClassificationProgressBar()
+            progressBar
             Divider()
             ScrollViewReader { proxy in
                 List(selection: Binding(
@@ -125,15 +221,11 @@ public struct AccountWindowScene: View {
                     }
                 )) {
                     ForEach(displayedMessages) { message in
-                        row(for: message)
+                        draggableRow(for: message)
                             .tag(message.id as Message.ID?)
                             .id(message.id)
                     }
                 }
-                // A6: ↑/↓ двигают selection и подкручивают ряд в видимую область.
-                // SwiftUI-`List` сам обрабатывает стрелки, когда в фокусе, но
-                // при этом не всегда скроллит к выбранному ряду — дублируем
-                // явным handler'ом с `scrollTo`.
                 .onKeyPress(.upArrow) {
                     moveSelection(by: -1, proxy: proxy)
                     return .handled
@@ -150,6 +242,17 @@ public struct AccountWindowScene: View {
                 }
             }
         }
+    }
+
+    /// AI-5: progress-bar обёрнут в отдельную view, чтобы переиспользовать
+    /// в обычном и filtered-режиме.
+    @ViewBuilder
+    private var progressBar: some View {
+        ClassificationProgressBar(
+            isActive: classificationProgress.isActive,
+            processed: classificationProgress.processed,
+            total: classificationProgress.total
+        )
     }
 
     private func moveSelection(by delta: Int, proxy: ScrollViewProxy) {
@@ -223,8 +326,11 @@ public struct AccountWindowScene: View {
         return mailbox.name
     }
 
-    @ViewBuilder private func row(for message: Message) -> some View {
+    /// AI-5: строка списка с .draggable() для drag-to-rule.
+    @ViewBuilder
+    private func draggableRow(for message: Message) -> some View {
         MessageRowView(message: message)
+            .draggable(DraggableMessage(message: message))
     }
 
     // MARK: - Reader
@@ -264,6 +370,43 @@ public struct AccountWindowScene: View {
     private var selectedMessage: Message? {
         guard let id = session.selectedMessageID else { return nil }
         return session.messages.first(where: { $0.id == id })
+    }
+
+    // MARK: - AI-5 drag-to-rule
+
+    private func handleDrop(onKind kind: SidebarItem.Kind, messages dropped: [DraggableMessage]) {
+        let mode: RuleProposalSheet.Mode
+        switch kind {
+        case .smartUnimportant: mode = .markUnimportant
+        case .smartImportant: mode = .markImportant
+        default: return
+        }
+        guard !dropped.isEmpty else { return }
+        ruleProposal = RuleProposal(messages: dropped, mode: mode)
+    }
+
+    private func saveRule(_ rule: Rule) async {
+        guard let engine = session.ruleEngine else {
+            // Без engine — просто покажем тост, что в demo-режиме
+            // правила не сохраняются.
+            await showToast("AI-pack отключён, правило не сохранено")
+            return
+        }
+        do {
+            try await engine.save(rule)
+            await showToast(rule.intent == .markImportant
+                            ? "Правило «Важное» создано"
+                            : "Правило «Неважно» создано")
+        } catch {
+            await showToast("Не удалось сохранить правило")
+        }
+    }
+
+    @MainActor
+    private func showToast(_ text: String) async {
+        withAnimation { ruleConfirmation = text }
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        withAnimation { ruleConfirmation = nil }
     }
 
     // MARK: - Shortcuts
