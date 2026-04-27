@@ -65,4 +65,16 @@ public enum AccountDataProviderFactory {
             return try? LiveSendProvider(account: account, secrets: secrets)
         }
     }
+
+    /// SMTP-5: возвращает замыкание для сохранения черновика через
+    /// `LiveAccountDataProvider.saveDraft(envelope:body:)`. Возвращает `nil`
+    /// для mock-режима или если provider не умеет writes.
+    public static func makeDraftSaver(
+        provider: any AccountDataProvider
+    ) -> ComposeViewModel.DraftSaver? {
+        guard let live = provider as? LiveAccountDataProvider else { return nil }
+        return { envelope, body in
+            try await live.saveDraft(envelope: envelope, body: body)
+        }
+    }
 }
