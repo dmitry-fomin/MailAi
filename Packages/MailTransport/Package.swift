@@ -10,7 +10,8 @@ let package = Package(
         .executable(name: "IMAPPerfSmoke", targets: ["IMAPPerfSmoke"]),
         .executable(name: "IMAPSessionSmoke", targets: ["IMAPSessionSmoke"]),
         .executable(name: "SMTPSmoke", targets: ["SMTPSmoke"]),
-        .executable(name: "MIMESmoke", targets: ["MIMESmoke"])
+        .executable(name: "MIMESmoke", targets: ["MIMESmoke"]),
+        .executable(name: "IMAPAppendSmoke", targets: ["IMAPAppendSmoke"])
     ],
     dependencies: [
         .package(path: "../Core"),
@@ -99,6 +100,17 @@ let package = Package(
                 "MailTransport"
             ],
             path: "Sources/MIMESmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
+        ),
+        .executableTarget(
+            name: "IMAPAppendSmoke",
+            dependencies: [
+                "MailTransport"
+            ],
+            path: "Sources/IMAPAppendSmoke",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableUpcomingFeature("ExistentialAny")

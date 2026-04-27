@@ -63,6 +63,9 @@ echo "▶ run RetentionGC smoke (AI-8: classification_log retention)"
 echo "▶ run MIME smoke (SMTP-2: MIMEComposer RFC 5322/2047/QP)"
 (cd Packages/MailTransport && swift run MIMESmoke)
 
+echo "▶ run IMAP APPEND smoke (SMTP-4: APPEND command formatting)"
+(cd Packages/MailTransport && swift run IMAPAppendSmoke)
+
 echo "▶ render screenshots (A10: Light/Dark → Scripts/artifacts/screenshots/)"
 (cd Packages/AppShell && swift run ScreenshotSmoke)
 
