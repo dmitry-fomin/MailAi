@@ -72,6 +72,9 @@ echo "▶ run IMAP APPEND smoke (SMTP-4: APPEND command formatting)"
 echo "▶ run ServerSync smoke (AI-7: серверная синхронизация Important/Unimportant)"
 (cd Packages/AppShell && swift run ServerSyncSmoke)
 
+echo "▶ run Session+IDLE smoke (Pool-4: fake IMAP, EXISTS push, cancel)"
+(cd Packages/MailTransport && swift run SessionPoolIDLESmoke)
+
 echo "▶ run StatusNotifications smoke (Status-3: badge + NL-фильтр)"
 (cd Packages/UI && swift run StatusNotificationsSmoke)
 
