@@ -59,12 +59,16 @@ public final class ComposeViewModel: ObservableObject {
         accountEmail: String,
         accountDisplayName: String? = nil,
         sendProvider: (any SendProvider)? = nil,
-        draftSaver: DraftSaver? = nil
+        draftSaver: DraftSaver? = nil,
+        defaultSignatureBody: String? = nil
     ) {
         self.accountEmail = accountEmail
         self.accountDisplayName = accountDisplayName
         self.sendProvider = sendProvider
         self.draftSaver = draftSaver
+        if let sig = defaultSignatureBody, !sig.isEmpty {
+            self.body = "\n\n\(sig)"
+        }
     }
 
     // MARK: - Capabilities
@@ -230,23 +234,25 @@ public final class ComposeViewModel: ObservableObject {
     // MARK: - Factory methods
 
     /// Reply: заполняет поле To = from исходного письма, Subject = "Re: …",
-    /// тело — цитата исходного письма.
+    /// тело — цитата исходного письма. Если передана подпись — добавляется перед цитатой.
     public static func makeReply(
         to original: Message,
         accountEmail: String,
         accountDisplayName: String?,
         sendProvider: (any SendProvider)?,
-        draftSaver: DraftSaver?
+        draftSaver: DraftSaver?,
+        defaultSignatureBody: String? = nil
     ) -> ComposeViewModel {
         let vm = ComposeViewModel(
             accountEmail: accountEmail,
             accountDisplayName: accountDisplayName,
             sendProvider: sendProvider,
-            draftSaver: draftSaver
+            draftSaver: draftSaver,
+            defaultSignatureBody: defaultSignatureBody
         )
         vm.to = original.from?.address ?? ""
         vm.subject = Self.reSubject(original.subject)
-        vm.body = Self.quotedBody(original)
+        vm.body = (vm.body) + Self.quotedBody(original)
         return vm
     }
 
@@ -256,13 +262,15 @@ public final class ComposeViewModel: ObservableObject {
         accountEmail: String,
         accountDisplayName: String?,
         sendProvider: (any SendProvider)?,
-        draftSaver: DraftSaver?
+        draftSaver: DraftSaver?,
+        defaultSignatureBody: String? = nil
     ) -> ComposeViewModel {
         let vm = ComposeViewModel(
             accountEmail: accountEmail,
             accountDisplayName: accountDisplayName,
             sendProvider: sendProvider,
-            draftSaver: draftSaver
+            draftSaver: draftSaver,
+            defaultSignatureBody: defaultSignatureBody
         )
         vm.to = original.from?.address ?? ""
         let ccAddresses = (original.to + original.cc)
@@ -270,7 +278,7 @@ public final class ComposeViewModel: ObservableObject {
             .filter { $0.lowercased() != accountEmail.lowercased() }
         vm.cc = ccAddresses.joined(separator: ", ")
         vm.subject = Self.reSubject(original.subject)
-        vm.body = Self.quotedBody(original)
+        vm.body = (vm.body) + Self.quotedBody(original)
         return vm
     }
 
@@ -280,16 +288,18 @@ public final class ComposeViewModel: ObservableObject {
         accountEmail: String,
         accountDisplayName: String?,
         sendProvider: (any SendProvider)?,
-        draftSaver: DraftSaver?
+        draftSaver: DraftSaver?,
+        defaultSignatureBody: String? = nil
     ) -> ComposeViewModel {
         let vm = ComposeViewModel(
             accountEmail: accountEmail,
             accountDisplayName: accountDisplayName,
             sendProvider: sendProvider,
-            draftSaver: draftSaver
+            draftSaver: draftSaver,
+            defaultSignatureBody: defaultSignatureBody
         )
         vm.subject = Self.fwdSubject(original.subject)
-        vm.body = Self.quotedBody(original)
+        vm.body = (vm.body) + Self.quotedBody(original)
         return vm
     }
 

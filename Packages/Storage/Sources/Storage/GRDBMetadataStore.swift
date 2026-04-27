@@ -155,10 +155,18 @@ public actor GRDBMetadataStore: MetadataStore {
         }
     }
 
-    /// Проверка инварианта: ни в одной таблице/колонке не сохранено тело.
+    /// Проверка инварианта: ни в одной таблице/колонке не сохранено тело письма.
     /// Используется тестом `privacyInvariants`.
+    ///
+    /// Таблица `signature` намеренно исключена: её колонка `body` содержит
+    /// текст *подписи* пользователя (пользовательские настройки), а не тело письма —
+    /// это допустимо по инварианту CLAUDE.md.
     public func hasAnyBodyColumn() async throws -> Bool {
-        try await pool.read { db in
+        // Таблицы-исключения: их `body`-колонки — пользовательские настройки,
+        // не тела писем.
+        let excludedTables: Set<String> = ["signature"]
+
+        return try await pool.read { db in
             let columns = try Row.fetchAll(db, sql: """
                 SELECT m.name AS table_name, p.name AS column_name
                 FROM sqlite_master m
@@ -167,6 +175,8 @@ public actor GRDBMetadataStore: MetadataStore {
                 """
             )
             for row in columns {
+                let tableName = (row["table_name"] as String?) ?? ""
+                guard !excludedTables.contains(tableName.lowercased()) else { continue }
                 let col = (row["column_name"] as String?) ?? ""
                 if ["body", "html", "text_body", "attachments_data"].contains(col.lowercased()) {
                     return true

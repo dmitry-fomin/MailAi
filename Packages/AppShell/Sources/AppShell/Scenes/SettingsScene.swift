@@ -3,22 +3,26 @@ import Core
 import Secrets
 import Storage
 import AI
+import GRDB
 
-/// Окно настроек приложения. Содержит вкладки "Общие", "Отфильтрованные"
-/// и "AI-pack" (ключ OpenRouter, модель, правила классификатора).
+/// Окно настроек приложения. Содержит вкладки "Общие", "Отфильтрованные",
+/// "Подписи" и "AI-pack" (ключ OpenRouter, модель, правила классификатора).
 ///
 /// AI-pack отображается, когда есть `AccountRegistry` и `SecretsStore`.
 /// Без них показываем placeholder — это режим до C4 / mock-режим без секретов.
 public struct SettingsScene: View {
     private let registry: AccountRegistry?
     private let secretsStore: (any SecretsStore)?
+    private let databasePool: DatabasePool?
 
     public init(
         registry: AccountRegistry? = nil,
-        secretsStore: (any SecretsStore)? = nil
+        secretsStore: (any SecretsStore)? = nil,
+        databasePool: DatabasePool? = nil
     ) {
         self.registry = registry
         self.secretsStore = secretsStore
+        self.databasePool = databasePool
     }
 
     public var body: some View {
@@ -27,10 +31,12 @@ public struct SettingsScene: View {
                 .tabItem { Label("Общие", systemImage: "gearshape") }
             FilteredSettingsView()
                 .tabItem { Label("Отфильтрованные", systemImage: "sparkles") }
+            SignaturesSettingsTab(databasePool: databasePool)
+                .tabItem { Label("Подписи", systemImage: "signature") }
             AIPackSettingsTab(registry: registry, secretsStore: secretsStore)
                 .tabItem { Label("AI-pack", systemImage: "wand.and.stars") }
         }
-        .frame(width: 560, height: 480)
+        .frame(width: 560, height: 520)
     }
 }
 
@@ -57,6 +63,153 @@ private struct FilteredSettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+// MARK: - Signatures Tab
+
+private struct SignaturesSettingsTab: View {
+    let databasePool: DatabasePool?
+
+    var body: some View {
+        Group {
+            if let pool = databasePool {
+                SignaturesSettingsView(
+                    viewModel: SignaturesViewModel(
+                        repository: SignaturesRepository(pool: pool)
+                    )
+                )
+            } else {
+                Form {
+                    Section("Подписи") {
+                        Label("База данных недоступна — откройте аккаунт, чтобы управлять подписями.",
+                              systemImage: "signature")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .formStyle(.grouped)
+            }
+        }
+    }
+}
+
+private struct SignaturesSettingsView: View {
+    @StateObject private var viewModel: SignaturesViewModel
+
+    @State private var editingName: String = ""
+    @State private var editingBody: String = ""
+    @State private var editingIsDefault: Bool = false
+
+    init(viewModel: SignaturesViewModel) {
+        _viewModel = StateObject(wrappedValue: viewModel)
+    }
+
+    var body: some View {
+        HSplitView {
+            // MARK: Left panel — list
+            VStack(spacing: 0) {
+                List(viewModel.signatures, id: \.id, selection: $viewModel.selectedID) { sig in
+                    Text(sig.name)
+                        .lineLimit(1)
+                }
+                .listStyle(.sidebar)
+                .frame(minWidth: 160, idealWidth: 180)
+
+                Divider()
+
+                HStack(spacing: 0) {
+                    Button {
+                        Task { await viewModel.add() }
+                    } label: {
+                        Image(systemName: "plus")
+                            .frame(width: 28, height: 22)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Добавить подпись")
+
+                    Button {
+                        if let id = viewModel.selectedID {
+                            Task { await viewModel.delete(id) }
+                        }
+                    } label: {
+                        Image(systemName: "minus")
+                            .frame(width: 28, height: 22)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(viewModel.selectedID == nil)
+                    .help("Удалить подпись")
+
+                    Spacer()
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
+                .background(.bar)
+            }
+
+            // MARK: Right panel — editor
+            VStack(alignment: .leading, spacing: 12) {
+                if let selected = viewModel.selected {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Название")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("Название подписи", text: $editingName)
+                            .textFieldStyle(.roundedBorder)
+
+                        Text("Текст подписи")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextEditor(text: $editingBody)
+                            .font(.body)
+                            .frame(minHeight: 120)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+                            )
+
+                        Toggle("Использовать по умолчанию", isOn: $editingIsDefault)
+                            .toggleStyle(.checkbox)
+
+                        HStack {
+                            Spacer()
+                            Button("Сохранить") {
+                                let name = editingName
+                                let body = editingBody
+                                let isDefault = editingIsDefault
+                                Task { await viewModel.save(name: name, body: body, isDefault: isDefault) }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(editingName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+                    .padding()
+                    .id(selected.id) // сбрасываем поля при смене выбора
+                    .onAppear {
+                        editingName = selected.name
+                        editingBody = selected.body
+                        editingIsDefault = selected.isDefault
+                    }
+                    .onChange(of: viewModel.selectedID) { _, _ in
+                        if let s = viewModel.selected {
+                            editingName = s.name
+                            editingBody = s.body
+                            editingIsDefault = s.isDefault
+                        }
+                    }
+                } else {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Text("Выберите подпись или добавьте новую")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    Spacer()
+                }
+            }
+            .frame(minWidth: 280)
+        }
+        .task { await viewModel.load() }
     }
 }
 
