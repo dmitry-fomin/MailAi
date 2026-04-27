@@ -139,13 +139,18 @@ public final class SMTPConnection: @unchecked Sendable {
             throw SMTPError.tls("STARTTLS отклонён: \(resp.code) \(resp.text)")
         }
 
-        // Добавляем TLS в pipeline
+        // Добавляем TLS в pipeline.
+        // NIOSSLClientHandler явно не Sendable (unavailable conformance) — добавляем
+        // через syncOperations на event loop, захватывая через nonisolated(unsafe).
         let sslContext = try NIOSSLContext(configuration: .makeClientConfiguration())
-        let tlsHandler = try NIOSSLClientHandler(
+        nonisolated(unsafe) let tlsHandler = try NIOSSLClientHandler(
             context: sslContext,
             serverHostname: hostname
         )
-        try await underlyingChannel.channel.pipeline.addHandler(tlsHandler, position: .first)
+        let channel = underlyingChannel.channel
+        try await channel.eventLoop.submit {
+            try channel.pipeline.syncOperations.addHandler(tlsHandler, position: .first)
+        }.get()
     }
 
     // MARK: - Аутентификация
