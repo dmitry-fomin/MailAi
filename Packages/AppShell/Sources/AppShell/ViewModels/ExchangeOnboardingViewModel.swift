@@ -103,7 +103,10 @@ public final class ExchangeOnboardingViewModel: ObservableObject {
             // Сохраняем EWS URL как отдельный секрет (reuse password slot с префиксом)
             try await secretsStore.setPassword(ewsURL.absoluteString, forAccount: Account.ID(accountID.rawValue + ":ewsURL"))
 
-            registry.register(account)
+            // Передаём уже готовый провайдер с правильным паролем — иначе
+            // AccountDataProviderFactory.makeExchange создаст клиент с пустым паролем.
+            let dataProvider = EWSAccountDataProvider(account: account, client: client)
+            registry.register(account, provider: dataProvider)
             password = ""
             phase = .succeeded(account)
         } catch {
