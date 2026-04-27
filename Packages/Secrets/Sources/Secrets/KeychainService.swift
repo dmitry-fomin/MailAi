@@ -16,6 +16,7 @@ public actor KeychainService: SecretsStore {
         case password
         case oauthRefreshToken
         case openrouter
+        case smtpPassword
     }
 
     private let servicePrefix: String
@@ -51,6 +52,18 @@ public actor KeychainService: SecretsStore {
 
     public func deleteOpenRouterKey(forAccount accountID: Account.ID) async throws {
         try await delete(kind: .openrouter, forAccount: accountID)
+    }
+
+    public func setSMTPPassword(_ password: String, forAccount accountID: Account.ID) async throws {
+        try await set(value: password, kind: .smtpPassword, forAccount: accountID)
+    }
+
+    public func smtpPassword(forAccount accountID: Account.ID) async throws -> String? {
+        try await value(kind: .smtpPassword, forAccount: accountID)
+    }
+
+    public func deleteSMTPPassword(forAccount accountID: Account.ID) async throws {
+        try await delete(kind: .smtpPassword, forAccount: accountID)
     }
 
     // MARK: - Generic kind-aware API

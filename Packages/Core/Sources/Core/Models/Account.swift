@@ -29,6 +29,14 @@ public struct Account: Sendable, Hashable, Identifiable, Codable {
     public let security: Security
     public let username: String
 
+    /// SMTP-хост для исходящих писем. `nil` — отправка через этот аккаунт
+    /// не настроена (SendProvider бросит `MailError.unsupported`).
+    public let smtpHost: String?
+    /// SMTP-порт. Стандартные: 587 (STARTTLS) или 465 (TLS).
+    public let smtpPort: UInt16?
+    /// Режим шифрования SMTP. Если `nil` — отправка не настроена.
+    public let smtpSecurity: Security?
+
     public init(
         id: ID,
         email: String,
@@ -37,7 +45,10 @@ public struct Account: Sendable, Hashable, Identifiable, Codable {
         host: String,
         port: UInt16,
         security: Security,
-        username: String
+        username: String,
+        smtpHost: String? = nil,
+        smtpPort: UInt16? = nil,
+        smtpSecurity: Security? = nil
     ) {
         self.id = id
         self.email = email
@@ -47,5 +58,8 @@ public struct Account: Sendable, Hashable, Identifiable, Codable {
         self.port = port
         self.security = security
         self.username = username
+        self.smtpHost = smtpHost
+        self.smtpPort = smtpPort
+        self.smtpSecurity = smtpSecurity
     }
 }

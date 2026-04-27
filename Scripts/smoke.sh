@@ -63,6 +63,9 @@ echo "▶ run RetentionGC smoke (AI-8: classification_log retention)"
 echo "▶ run MIME smoke (SMTP-2: MIMEComposer RFC 5322/2047/QP)"
 (cd Packages/MailTransport && swift run MIMESmoke)
 
+echo "▶ run SMTPProvider smoke (SMTP-3: SendProvider + LiveSendProvider)"
+(cd Packages/MailTransport && swift run SMTPProviderSmoke)
+
 echo "▶ run StatusNotifications smoke (Status-3: badge + NL-фильтр)"
 (cd Packages/UI && swift run StatusNotificationsSmoke)
 

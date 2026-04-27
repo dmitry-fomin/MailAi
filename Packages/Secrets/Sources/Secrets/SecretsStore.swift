@@ -11,6 +11,15 @@ public protocol SecretsStore: Sendable {
     func setOpenRouterKey(_ key: String, forAccount accountID: Account.ID) async throws
     func openRouterKey(forAccount accountID: Account.ID) async throws -> String?
     func deleteOpenRouterKey(forAccount accountID: Account.ID) async throws
+
+    /// SMTP-пароль для исходящей почты. Хранится отдельным ключом
+    /// (`smtpPassword`), потому что у Gmail/Yandex/iCloud SMTP-доступ часто
+    /// требует отдельный application-password, не совпадающий с IMAP-паролем.
+    /// Если SMTP-пароль не задан, реализация-fallback может прочитать
+    /// IMAP-пароль (`password`) — это решение `LiveSendProvider`, не store.
+    func setSMTPPassword(_ password: String, forAccount accountID: Account.ID) async throws
+    func smtpPassword(forAccount accountID: Account.ID) async throws -> String?
+    func deleteSMTPPassword(forAccount accountID: Account.ID) async throws
 }
 
 /// In-memory реализация для тестов и dev-режима. НЕ использовать в проде —
@@ -18,6 +27,7 @@ public protocol SecretsStore: Sendable {
 public actor InMemorySecretsStore: SecretsStore {
     private var passwords: [Account.ID: String] = [:]
     private var openRouterKeys: [Account.ID: String] = [:]
+    private var smtpPasswords: [Account.ID: String] = [:]
 
     public init() {}
 
@@ -43,5 +53,17 @@ public actor InMemorySecretsStore: SecretsStore {
 
     public func deleteOpenRouterKey(forAccount accountID: Account.ID) async throws {
         openRouterKeys.removeValue(forKey: accountID)
+    }
+
+    public func setSMTPPassword(_ password: String, forAccount accountID: Account.ID) async throws {
+        smtpPasswords[accountID] = password
+    }
+
+    public func smtpPassword(forAccount accountID: Account.ID) async throws -> String? {
+        smtpPasswords[accountID]
+    }
+
+    public func deleteSMTPPassword(forAccount accountID: Account.ID) async throws {
+        smtpPasswords.removeValue(forKey: accountID)
     }
 }

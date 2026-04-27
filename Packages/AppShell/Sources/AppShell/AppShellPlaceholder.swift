@@ -47,4 +47,22 @@ public enum AccountDataProviderFactory {
             )
         }
     }
+
+    /// Собирает `SendProvider` для аккаунта. Возвращает `nil`, если режим
+    /// `.mock` или у аккаунта не настроены SMTP-поля (`smtpHost/smtpPort/
+    /// smtpSecurity`) — в этом случае UI скрывает кнопку «Отправить».
+    public static func makeSendProvider(
+        for account: Account,
+        mode: AppShellMode,
+        secrets: (any SecretsStore)? = nil
+    ) -> (any SendProvider)? {
+        switch mode {
+        case .mock:
+            return nil
+        case .live:
+            guard let secrets else { return nil }
+            guard LiveSendProvider.resolveEndpoint(for: account) != nil else { return nil }
+            return try? LiveSendProvider(account: account, secrets: secrets)
+        }
+    }
 }
