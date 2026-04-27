@@ -24,6 +24,15 @@ let package = Package(
             name: "UITests",
             dependencies: ["UI"],
             path: "Tests/UITests"
+        ),
+        .executableTarget(
+            name: "StatusNotificationsSmoke",
+            dependencies: [],
+            path: "Sources/StatusNotificationsSmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
         )
     ]
 )
