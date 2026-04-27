@@ -10,18 +10,31 @@ import Core
 /// Shift+Space (pageUp), стрелки и PageUp/PageDown.
 public struct ReaderBodyView: View {
     public let messageBody: MessageBody
+    public let attachments: [Attachment]
     @Binding public var isFocused: Bool
 
-    public init(body: MessageBody, isFocused: Binding<Bool> = .constant(false)) {
+    public init(
+        body: MessageBody,
+        attachments: [Attachment] = [],
+        isFocused: Binding<Bool> = .constant(false)
+    ) {
         self.messageBody = body
+        self.attachments = attachments
         self._isFocused = isFocused
     }
 
     public var body: some View {
         KeyboardScrollableReader(isFocused: $isFocused) {
-            content
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(16)
+            VStack(alignment: .leading, spacing: 0) {
+                content
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if !attachments.isEmpty {
+                    Divider()
+                        .padding(.top, 8)
+                    AttachmentListView(attachments: attachments)
+                }
+            }
+            .padding(16)
         }
     }
 
