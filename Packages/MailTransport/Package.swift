@@ -11,7 +11,8 @@ let package = Package(
         .executable(name: "IMAPSessionSmoke", targets: ["IMAPSessionSmoke"]),
         .executable(name: "SMTPSmoke", targets: ["SMTPSmoke"]),
         .executable(name: "MIMESmoke", targets: ["MIMESmoke"]),
-        .executable(name: "SMTPProviderSmoke", targets: ["SMTPProviderSmoke"])
+        .executable(name: "SMTPProviderSmoke", targets: ["SMTPProviderSmoke"]),
+        .executable(name: "IMAPAppendSmoke", targets: ["IMAPAppendSmoke"])
     ],
     dependencies: [
         .package(path: "../Core"),
@@ -111,6 +112,17 @@ let package = Package(
                 "MailTransport", "Core", "Secrets"
             ],
             path: "Sources/SMTPProviderSmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
+        ),
+        .executableTarget(
+            name: "IMAPAppendSmoke",
+            dependencies: [
+                "MailTransport"
+            ],
+            path: "Sources/IMAPAppendSmoke",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableUpcomingFeature("ExistentialAny")

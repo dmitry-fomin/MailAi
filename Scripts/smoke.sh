@@ -66,6 +66,9 @@ echo "▶ run MIME smoke (SMTP-2: MIMEComposer RFC 5322/2047/QP)"
 echo "▶ run SMTPProvider smoke (SMTP-3: SendProvider + LiveSendProvider)"
 (cd Packages/MailTransport && swift run SMTPProviderSmoke)
 
+echo "▶ run IMAP APPEND smoke (SMTP-4: APPEND command formatting)"
+(cd Packages/MailTransport && swift run IMAPAppendSmoke)
+
 echo "▶ run StatusNotifications smoke (Status-3: badge + NL-фильтр)"
 (cd Packages/UI && swift run StatusNotificationsSmoke)
 

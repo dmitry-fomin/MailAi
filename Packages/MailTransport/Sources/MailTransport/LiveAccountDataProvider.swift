@@ -395,4 +395,38 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
     public func setFlagged(_ flagged: Bool, messageID: Message.ID) async throws {
         try await setFlag(.flagged, on: messageID, enabled: flagged)
     }
+
+    // MARK: - SMTP-4: черновики
+
+    /// Сохраняет черновик через IMAP APPEND в папку с `role == .drafts`.
+    ///
+    /// Алгоритм:
+    ///   1. Находим Drafts через `mailboxes()` (role-detection уже отрабатывает
+    ///      RFC 6154 SPECIAL-USE и хёристику по имени).
+    ///   2. Компонуем MIME через `MIMEComposer` (UTF-8 + RFC 2047 + QP).
+    ///   3. APPEND'им как литерал с флагом `\\Draft`.
+    ///
+    /// Тело письма находится в памяти только на время этого вызова — после
+    /// возврата строка `composed` выходит из скоупа.
+    ///
+    /// Бросает `MailError.mailboxNotFound`, если у аккаунта нет Drafts-папки.
+    public func saveDraft(envelope: DraftEnvelope, body: String) async throws {
+        let allMailboxes = try await mailboxes()
+        guard let drafts = allMailboxes.first(where: { $0.role == .drafts }) else {
+            throw MailError.mailboxNotFound(Mailbox.ID(Mailbox.Role.drafts.rawValue))
+        }
+        let composed = MIMEComposer.compose(
+            from: envelope.from,
+            recipients: envelope.recipients,
+            subject: envelope.subject,
+            body: body
+        )
+        let sess = try await ensureSession()
+        try await sess.append(
+            mailbox: drafts.path,
+            flags: ["\\Draft"],
+            date: nil,
+            literal: composed
+        )
+    }
 }

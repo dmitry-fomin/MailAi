@@ -92,3 +92,28 @@ for try await chunk in stream {
 - Вложения (`base64` с большим размером) предполагают пользовательский сценарий
   «сохранить как файл» — см. `docs/Attachments.md`. В рамках B7 — только стрим
   байтов, без записи на диск.
+
+## SMTP-4 — Черновики через IMAP APPEND
+
+### `IMAPConnection.append(mailbox:flags:date:literal:)`
+
+RFC 3501 §6.3.11. Двухфазная команда:
+
+1. `<tag> APPEND <mailbox> [(flags)] [date-time] {N}` — клиент передаёт длину
+   литерала в октетах UTF-8.
+2. Сервер отвечает `+ ...` continuation.
+3. Клиент шлёт литерал длиной ровно `N` байт + завершающий `\r\n`.
+4. Сервер возвращает финальный tagged-ответ.
+
+Помощник `IMAPConnection.formatAppendCommand(...)` строит первую строку
+без CRLF — используется как для отправки, так и для тестов
+(`IMAPAppendSmoke`).
+
+### `LiveAccountDataProvider.saveDraft(envelope:body:)`
+
+Находит папку с `Mailbox.Role == .drafts` через `mailboxes()`, компонует
+MIME через `MIMEComposer`, APPEND'ит с флагом `\Draft`.
+
+Тело письма живёт в памяти только на время вызова — после `saveDraft`
+строка `composed` выходит из скоупа, ни в кеше, ни в БД, ни в логах
+не сохраняется. Черновики хранятся **только** на сервере IMAP.

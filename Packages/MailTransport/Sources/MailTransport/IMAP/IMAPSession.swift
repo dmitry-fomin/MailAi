@@ -79,6 +79,16 @@ private enum SessionCommand: Sendable {
         CheckedContinuation<[UInt8], any Error>
     )
     case logout(CheckedContinuation<Void, any Error>)
+    case append(AppendArgs, CheckedContinuation<Void, any Error>)
+}
+
+/// Аргументы IMAP APPEND-команды (вынесены в struct, чтобы не плодить
+/// associated values в `SessionCommand.append`).
+private struct AppendArgs: Sendable {
+    let mailbox: String
+    let flags: [String]
+    let date: String?
+    let literal: String
 }
 
 // MARK: - IMAPSession
@@ -291,6 +301,21 @@ public actor IMAPSession {
         }
     }
 
+    /// APPEND (RFC 3501 §6.3.11) — кладёт raw-сообщение в указанный mailbox.
+    /// Используется для сохранения черновиков в Drafts. Тело передаётся как
+    /// IMAP-literal, сервер обязан принять `\r\n` внутри.
+    public func append(
+        mailbox: String,
+        flags: [String] = [],
+        date: String? = nil,
+        literal: String
+    ) async throws {
+        let args = AppendArgs(mailbox: mailbox, flags: flags, date: date, literal: literal)
+        try await enqueueCommand { continuation in
+            .append(args, continuation)
+        }
+    }
+
     /// Явный LOGOUT через command queue (в отличие от `stop()` который
     /// отменяет Task). Полезен для graceful shutdown: LOGOUT отправится
     /// после завершения всех предыдущих команд.
@@ -381,6 +406,15 @@ public actor IMAPSession {
             await bridge(cont) { try await connection.fetchBody(uid: uid, section: section) }
         case .logout(let cont):
             await bridge(cont) { try await connection.logout() }
+        case .append(let args, let cont):
+            await bridge(cont) {
+                try await connection.append(
+                    mailbox: args.mailbox,
+                    flags: args.flags,
+                    date: args.date,
+                    literal: args.literal
+                )
+            }
         }
     }
 
