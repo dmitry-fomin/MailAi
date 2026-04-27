@@ -2,13 +2,21 @@ import Foundation
 import Core
 
 public protocol SidebarProvider: Sendable {
-    func sections(for account: Account, mailboxes: [Mailbox]) async -> [SidebarSection]
+    func sections(
+        for account: Account,
+        mailboxes: [Mailbox],
+        messages: [Message]
+    ) async -> [SidebarSection]
 }
 
 public struct MockSidebarProvider: SidebarProvider {
     public init() {}
 
-    public func sections(for account: Account, mailboxes: [Mailbox]) async -> [SidebarSection] {
+    public func sections(
+        for account: Account,
+        mailboxes: [Mailbox],
+        messages: [Message]
+    ) async -> [SidebarSection] {
         let favorites = SidebarSection(
             id: .favorites,
             title: "Избранное",
@@ -32,9 +40,16 @@ public struct MockSidebarProvider: SidebarProvider {
 
         let totalUnread = mailboxes.reduce(0) { $0 + $1.unreadCount }
 
-        // AI-pack v1: «Отфильтрованные» — каркас для будущей AI-классификации.
-        // В v1 счётчики всегда 0 и клик открывает empty-state с подсказкой
-        // «включите AI-pack в настройках».
+        // AI-5: «Отфильтрованные» — живые счётчики на основе
+        // `message.importance`. Считаем письма из текущего списка
+        // (visible scope = выбранная папка). Когда AI-pack отключён, поле
+        // `importance` остаётся `.unknown` и счётчики будут нулевыми.
+        let importantCount = messages.reduce(into: 0) { acc, m in
+            if m.importance == .important { acc += 1 }
+        }
+        let unimportantCount = messages.reduce(into: 0) { acc, m in
+            if m.importance == .unimportant { acc += 1 }
+        }
         let filtered = SidebarSection(
             id: .filtered,
             title: "Отфильтрованные",
@@ -43,14 +58,14 @@ public struct MockSidebarProvider: SidebarProvider {
                     id: .init("filtered-important"),
                     title: "Важное",
                     systemImage: "exclamationmark.circle",
-                    unreadCount: 0,
+                    unreadCount: importantCount,
                     kind: .smartImportant
                 ),
                 SidebarItem(
                     id: .init("filtered-unimportant"),
                     title: "Неважно",
                     systemImage: "archivebox",
-                    unreadCount: 0,
+                    unreadCount: unimportantCount,
                     kind: .smartUnimportant
                 )
             ]

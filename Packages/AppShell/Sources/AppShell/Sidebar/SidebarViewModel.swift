@@ -17,8 +17,12 @@ public final class SidebarViewModel: ObservableObject {
         self.provider = provider
     }
 
-    public func rebuild(with mailboxes: [Mailbox]) async {
-        let next = await provider.sections(for: account, mailboxes: mailboxes)
+    public func rebuild(with mailboxes: [Mailbox], messages: [Message] = []) async {
+        let next = await provider.sections(
+            for: account,
+            mailboxes: mailboxes,
+            messages: messages
+        )
         sections = next
         if selectedItemID == nil {
             selectedItemID = defaultSelection(in: next)

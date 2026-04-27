@@ -1,5 +1,6 @@
 import Foundation
 import Core
+import AI
 
 /// Состояние одного окна-аккаунта. Держит выбранную папку, список писем
 /// выбранной папки и открытое письмо. Полное тело — только в памяти, пока
@@ -10,6 +11,14 @@ public final class AccountSessionModel: ObservableObject {
     public let provider: any AccountDataProvider
     public let selectionPersistence: any SelectionPersistence
     public let searchService: (any SearchService)?
+    /// AI-5: опциональный движок правил. Используется UI'ем (drag-to-rule)
+    /// для создания правил на основе письма. Если `nil`, drag-to-rule
+    /// показывает только информационное сообщение.
+    public let ruleEngine: RuleEngine?
+    /// AI-5: опциональная очередь классификации. Когда задана —
+    /// `AccountWindowScene` рисует `ClassificationProgressBar`,
+    /// привязанный к её снапшотам.
+    public let classificationQueue: ClassificationQueue?
 
     @Published public private(set) var mailboxes: [Mailbox] = []
     @Published public var selectedMailboxID: Mailbox.ID? {
@@ -46,12 +55,16 @@ public final class AccountSessionModel: ObservableObject {
         account: Account,
         provider: any AccountDataProvider,
         selectionPersistence: any SelectionPersistence = InMemorySelectionPersistence(),
-        searchService: (any SearchService)? = nil
+        searchService: (any SearchService)? = nil,
+        ruleEngine: RuleEngine? = nil,
+        classificationQueue: ClassificationQueue? = nil
     ) {
         self.account = account
         self.provider = provider
         self.selectionPersistence = selectionPersistence
         self.searchService = searchService
+        self.ruleEngine = ruleEngine
+        self.classificationQueue = classificationQueue
     }
 
     public func loadMailboxes() async {
