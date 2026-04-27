@@ -80,6 +80,10 @@ private enum SessionCommand: Sendable {
     )
     case logout(CheckedContinuation<Void, any Error>)
     case append(AppendArgs, CheckedContinuation<Void, any Error>)
+    case createMailbox(
+        mailbox: String,
+        CheckedContinuation<Void, any Error>
+    )
 }
 
 /// Аргументы IMAP APPEND-команды (вынесены в struct, чтобы не плодить
@@ -316,6 +320,15 @@ public actor IMAPSession {
         }
     }
 
+    /// CREATE <mailbox> — создаёт mailbox (RFC 3501 §6.3.3).
+    /// Идемпотентно через ошибку `IMAPConnection.CreateMailboxError.alreadyExists`,
+    /// которую вызывающий ловит сам.
+    public func createMailbox(_ mailbox: String) async throws {
+        try await enqueueCommand { continuation in
+            .createMailbox(mailbox: mailbox, continuation)
+        }
+    }
+
     /// Явный LOGOUT через command queue (в отличие от `stop()` который
     /// отменяет Task). Полезен для graceful shutdown: LOGOUT отправится
     /// после завершения всех предыдущих команд.
@@ -406,6 +419,8 @@ public actor IMAPSession {
             await bridge(cont) { try await connection.fetchBody(uid: uid, section: section) }
         case .logout(let cont):
             await bridge(cont) { try await connection.logout() }
+        case .createMailbox(let mailbox, let cont):
+            await bridge(cont) { try await connection.create(mailbox: mailbox) }
         case .append(let args, let cont):
             await bridge(cont) {
                 try await connection.append(

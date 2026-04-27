@@ -12,7 +12,8 @@ let package = Package(
         .executable(name: "LiveFlowSmoke", targets: ["LiveFlowSmoke"]),
         .executable(name: "ActionsSmoke", targets: ["ActionsSmoke"]),
         .executable(name: "SearchSmoke", targets: ["SearchSmoke"]),
-        .executable(name: "ClassificationSmoke", targets: ["ClassificationSmoke"])
+        .executable(name: "ClassificationSmoke", targets: ["ClassificationSmoke"]),
+        .executable(name: "ServerSyncSmoke", targets: ["ServerSyncSmoke"])
     ],
     dependencies: [
         .package(path: "../Core"),
@@ -113,6 +114,15 @@ let package = Package(
             name: "ClassificationSmoke",
             dependencies: ["AppShell"],
             path: "Sources/ClassificationSmoke",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
+        ),
+        .executableTarget(
+            name: "ServerSyncSmoke",
+            dependencies: ["AppShell", "Core", "MailTransport"],
+            path: "Sources/ServerSyncSmoke",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableUpcomingFeature("ExistentialAny")

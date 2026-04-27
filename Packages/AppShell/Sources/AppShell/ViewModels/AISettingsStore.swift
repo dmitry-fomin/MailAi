@@ -29,12 +29,28 @@ public actor AISettingsStore {
         defaults.set(id, forKey: Self.modelKey(accountID))
     }
 
+    /// AI-7: серверная синхронизация «Отфильтрованных» папок (Important/Unimportant).
+    /// Когда включено — после классификации сообщения провайдер делает UID MOVE
+    /// в соответствующую серверную папку (создавая её при необходимости).
+    /// Backfill старых писем не выполняется — только новые после включения.
+    public func serverSyncEnabled(forAccount accountID: Account.ID) -> Bool {
+        defaults.bool(forKey: Self.serverSyncKey(accountID))
+    }
+
+    public func setServerSyncEnabled(_ enabled: Bool, forAccount accountID: Account.ID) {
+        defaults.set(enabled, forKey: Self.serverSyncKey(accountID))
+    }
+
     private static func enabledKey(_ id: Account.ID) -> String {
         "ai.pack.enabled.\(id.rawValue)"
     }
 
     private static func modelKey(_ id: Account.ID) -> String {
         "ai.pack.model.\(id.rawValue)"
+    }
+
+    private static func serverSyncKey(_ id: Account.ID) -> String {
+        "ai.pack.serverSync.\(id.rawValue)"
     }
 }
 
