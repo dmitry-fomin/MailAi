@@ -519,10 +519,7 @@ public actor IMAPIdleController {
         return (value, tagPart)
     }
 
-    /// Ждёт первое из: следующая команда / завершение IDLE / истечение
-    /// 29-минутного таймера. Реализовано через `withTaskGroup`. Если команда
-    /// «проиграла» гонку (победил idle/timeout, но queue уже выдал команду —
-    /// тонкая гонка), возвращаем её обратно в очередь через `unshift`.
+    // swiftlint:disable:next cyclomatic_complexity
     private static func waitForFirst(
         queue: IdleCommandQueue,
         idleTask: Task<Void, any Error>,
