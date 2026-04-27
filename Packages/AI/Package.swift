@@ -16,6 +16,9 @@ let package = Package(
             name: "AI",
             dependencies: ["Core", "Storage"],
             path: "Sources/AI",
+            resources: [
+                .process("Prompts")
+            ],
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableUpcomingFeature("ExistentialAny")
