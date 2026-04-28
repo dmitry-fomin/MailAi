@@ -20,6 +20,13 @@ public final class AccountSessionModel: ObservableObject {
     /// `AccountWindowScene` рисует `ClassificationProgressBar`,
     /// привязанный к её снапшотам.
     public let classificationQueue: ClassificationQueue?
+    /// MailAi-nmo4: опциональный координатор фоновой синхронизации.
+    /// Когда задан — `AccountWindowScene` показывает индикатор синхронизации в тулбаре.
+    public let syncCoordinator: BackgroundSyncCoordinator?
+    /// MailAi-d0bz: опциональная офлайн-очередь действий. Когда задана —
+    /// действия ставятся в очередь при отсутствии соединения и применяются при
+    /// восстановлении. Conflict resolution: последнее действие выигрывает.
+    public let offlineActionQueue: OfflineActionQueue?
 
     @Published public private(set) var mailboxes: [Mailbox] = []
     @Published public var selectedMailboxID: Mailbox.ID? {
@@ -64,7 +71,9 @@ public final class AccountSessionModel: ObservableObject {
         selectionPersistence: any SelectionPersistence = InMemorySelectionPersistence(),
         searchService: (any SearchService)? = nil,
         ruleEngine: RuleEngine? = nil,
-        classificationQueue: ClassificationQueue? = nil
+        classificationQueue: ClassificationQueue? = nil,
+        syncCoordinator: BackgroundSyncCoordinator? = nil,
+        offlineActionQueue: OfflineActionQueue? = nil
     ) {
         self.account = account
         self.provider = provider
@@ -72,6 +81,8 @@ public final class AccountSessionModel: ObservableObject {
         self.searchService = searchService
         self.ruleEngine = ruleEngine
         self.classificationQueue = classificationQueue
+        self.syncCoordinator = syncCoordinator
+        self.offlineActionQueue = offlineActionQueue
     }
 
     public func loadMailboxes() async {
@@ -285,6 +296,90 @@ public final class AccountSessionModel: ObservableObject {
         }
     }
 
+    // MARK: - MailAi-spo9: Archive
+
+    /// Архивирует несколько писем (batch-вариант).
+    ///
+    /// Перемещает письма в папку Archive из `mailboxes`. Используется из
+    /// `BatchActionController` и по keyboard shortcut `E` (как в Apple Mail).
+    /// Одиночное архивирование — через `perform(.archive)`.
+    public func archive(messageIDs: [Message.ID]) async {
+        guard let actions = provider as? any MailActionsProvider else { return }
+        guard !messageIDs.isEmpty else { return }
+
+        do {
+            for id in messageIDs {
+                if Task.isCancelled { break }
+                try await actions.archive(messageID: id)
+                removeFromList(messageID: id)
+            }
+        } catch let err as MailError {
+            lastError = err
+        } catch {
+            lastError = .network(.unknown)
+        }
+    }
+
+    // MARK: - MailAi-9fi0: Trash Restore
+
+    /// Восстанавливает письма из Trash обратно в указанную папку.
+    ///
+    /// Вызывает `MailActionsProvider.restore(messageIDs:to:)`, затем
+    /// убирает письма из текущего списка (так как мы находимся в Trash)
+    /// и обновляет `lastError` при ошибке.
+    ///
+    /// - Parameters:
+    ///   - messageIDs: Идентификаторы писем для восстановления.
+    ///   - targetMailboxID: Папка назначения. Если `nil` — используется Inbox.
+    public func restore(
+        messageIDs: [Message.ID],
+        to targetMailboxID: Mailbox.ID? = nil
+    ) async {
+        guard let actions = provider as? any MailActionsProvider else { return }
+        guard !messageIDs.isEmpty else { return }
+
+        let destination: Mailbox.ID
+        if let target = targetMailboxID {
+            destination = target
+        } else if let inbox = mailboxes.first(where: { $0.role == .inbox }) {
+            destination = inbox.id
+        } else {
+            lastError = .network(.unknown)
+            return
+        }
+
+        do {
+            try await actions.restore(messageIDs: messageIDs, to: destination)
+            for id in messageIDs {
+                removeFromList(messageID: id)
+            }
+        } catch let err as MailError {
+            lastError = err
+        } catch {
+            lastError = .network(.unknown)
+        }
+    }
+
+    /// Возвращает `true`, если текущая папка — Trash.
+    public var isInTrash: Bool {
+        guard let selectedID = selectedMailboxID else { return false }
+        return mailboxes.first(where: { $0.id == selectedID })?.role == .trash
+    }
+
+    // MARK: - Internal helpers for BatchActionController
+
+    /// Публичный вариант `removeFromList` — используется `BatchActionController`
+    /// для обновления локального списка после batch-операций.
+    public func removeFromListPublic(messageID: Message.ID) {
+        removeFromList(messageID: messageID)
+    }
+
+    /// Публичный вариант `updateFlags` — используется `BatchActionController`
+    /// для оптимистичного обновления флагов после batch-операций.
+    public func updateFlagsPublic(messageID: Message.ID, mutate: (inout MessageFlags) -> Void) {
+        updateFlags(messageID: messageID, mutate: mutate)
+    }
+
     // MARK: - MailAi-791: Network Monitoring
 
     public func startNetworkMonitoring() {
@@ -310,7 +405,12 @@ public final class AccountSessionModel: ObservableObject {
                             // БАГ-5: отменяем предыдущий Task восстановления,
                             // чтобы быстрое мигание сети не создавало конкурирующих Task.
                             self.networkRecoveryTask?.cancel()
-                            self.networkRecoveryTask = Task { await self.loadMessages(for: id) }
+                            self.networkRecoveryTask = Task {
+                                // MailAi-d0bz: применяем накопленные офлайн-действия
+                                // перед перезагрузкой писем.
+                                await self.applyOfflineQueue()
+                                await self.loadMessages(for: id)
+                            }
                         }
                     }
                 }
@@ -325,6 +425,36 @@ public final class AccountSessionModel: ObservableObject {
         pathMonitor = nil
         monitorTask = nil
         networkRecoveryTask = nil
+    }
+
+    // MARK: - MailAi-d0bz: Offline Queue
+
+    /// Применяет накопленные офлайн-действия при восстановлении соединения.
+    /// Вызывается из `networkRecoveryTask` сразу после появления сети.
+    private func applyOfflineQueue() async {
+        guard let queue = offlineActionQueue,
+              let actions = provider as? any MailActionsProvider else { return }
+        let accountID = account.id
+        await queue.applyPending(for: accountID, actions: actions)
+    }
+
+    /// Ставит действие в офлайн-очередь (используется из `perform` и batch API
+    /// когда `isOffline == true` и `offlineActionQueue` задана).
+    public func enqueueOffline(
+        messageID: Message.ID,
+        action: OfflineActionType,
+        payload: [String: String] = [:]
+    ) {
+        guard let queue = offlineActionQueue else { return }
+        let accountID = account.id
+        Task {
+            try? await queue.enqueue(
+                messageID: messageID,
+                accountID: accountID,
+                action: action,
+                payload: payload
+            )
+        }
     }
 
     private func updateFlags(messageID: Message.ID, mutate: (inout MessageFlags) -> Void) {

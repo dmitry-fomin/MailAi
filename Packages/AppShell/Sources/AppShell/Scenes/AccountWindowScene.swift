@@ -7,6 +7,8 @@ public struct AccountWindowScene: View {
     @ObservedObject var session: AccountSessionModel
     @StateObject private var sidebar: SidebarViewModel
     @StateObject private var classificationProgress: ClassificationProgressViewModel
+    /// MailAi-nmo4: индикатор синхронизации в тулбаре.
+    @StateObject private var syncProgress = SyncProgressViewModel()
 
     /// AI-G: переводчик писем. nil — кнопка «Перевести» скрыта.
     private let translator: (any AITranslator)?
@@ -81,12 +83,65 @@ public struct AccountWindowScene: View {
     }
 
     public var body: some View {
+        mainContent
+            .mailKeyboardShortcuts(
+                onReply: {
+                    guard let msg = selectedMessage else { return }
+                    composeRequest = ComposeRequest(model: ComposeViewModel.makeReply(
+                        to: msg,
+                        accountEmail: session.account.email,
+                        accountDisplayName: session.account.displayName,
+                        sendProvider: session.provider as? any SendProvider,
+                        draftSaver: nil
+                    ))
+                },
+                onReplyAll: {
+                    guard let msg = selectedMessage else { return }
+                    composeRequest = ComposeRequest(model: ComposeViewModel.makeReplyAll(
+                        to: msg,
+                        accountEmail: session.account.email,
+                        accountDisplayName: session.account.displayName,
+                        sendProvider: session.provider as? any SendProvider,
+                        draftSaver: nil
+                    ))
+                },
+                onForward: {
+                    guard let msg = selectedMessage else { return }
+                    composeRequest = ComposeRequest(model: ComposeViewModel.makeForward(
+                        of: msg,
+                        accountEmail: session.account.email,
+                        accountDisplayName: session.account.displayName,
+                        sendProvider: session.provider as? any SendProvider,
+                        draftSaver: nil
+                    ))
+                },
+                onArchive: { Task { await session.perform(.archive) } },
+                onDelete: { showDeleteConfirmation = true },
+                onNextUnread: { selectNextUnread() },
+                onCompose: {
+                    composeRequest = ComposeRequest(model: ComposeViewModel(
+                        accountEmail: session.account.email,
+                        accountDisplayName: session.account.displayName,
+                        sendProvider: session.provider as? any SendProvider,
+                        draftSaver: nil
+                    ))
+                },
+                onFocusSearch: { focus = .list }
+            )
+    }
+
+    // MARK: - Main layout
+
+    @ViewBuilder private var mainContent: some View {
         NavigationSplitView {
             SidebarView(
                 viewModel: sidebar,
                 onSelect: { item in handleSelection(item) },
                 onDropMessages: { kind, dropped in
                     handleDrop(onKind: kind, messages: dropped)
+                },
+                onMailboxAction: { action in
+                    handleMailboxAction(action)
                 }
             )
             .frame(minWidth: 200)
@@ -107,6 +162,13 @@ public struct AccountWindowScene: View {
                 .focused($focus, equals: .reader)
         }
         .navigationTitle(session.account.email)
+        .toolbar {
+            // MailAi-nmo4: индикатор синхронизации — виден только при активном sync.
+            ToolbarItem(placement: .status) {
+                SyncStatusIndicator(phase: syncProgress.phase)
+                    .animation(.easeInOut(duration: 0.2), value: syncProgress.phase)
+            }
+        }
         .safeAreaInset(edge: .top, spacing: 0) {
             // MailAi-791: офлайн-баннер.
             if session.isOffline {
@@ -134,6 +196,16 @@ public struct AccountWindowScene: View {
             if let queue = session.classificationQueue {
                 classificationProgress.bind(to: queue)
             }
+            // MailAi-nmo4: подписка индикатора синхронизации на стрим BackgroundSyncCoordinator.
+            if let coordinator = session.syncCoordinator {
+                syncProgress.bind(to: coordinator.progress) { snap in
+                    switch snap.phase {
+                    case .idle, .completed: return .idle
+                    case .syncing:          return .syncing
+                    case .failed(let msg):  return .failed(message: msg)
+                    }
+                }
+            }
             // Стартовый фокус — в списке писем.
             if focus == nil { focus = .list }
             // MailAi-791: запуск мониторинга сети.
@@ -146,8 +218,40 @@ public struct AccountWindowScene: View {
             // AI-5: счётчики «Отфильтрованных» обновляются реактивно.
             Task { await rebuildSidebar() }
         }
+        // MailAi-6xac: обработка подтверждения создания папки
+        .onChange(of: sidebar.pendingFolderName) { _, newName in
+            guard let name = newName, !name.isEmpty else { return }
+            if sidebar.showCreateFolderDialog == false,
+               let provider = session.provider as? any MailboxActionsProvider {
+                let parentPath = sidebar.pendingParentPath
+                Task {
+                    do {
+                        _ = try await provider.createMailbox(name: name, parentPath: parentPath)
+                        await session.loadMailboxes()
+                        await showToast("Папка «\(name)» создана")
+                    } catch {
+                        await showToast("Не удалось создать папку «\(name)»")
+                    }
+                    sidebar.pendingFolderName = nil
+                }
+            } else if sidebar.showRenameFolderDialog == false,
+                      let provider = session.provider as? any MailboxActionsProvider,
+                      let mailboxID = sidebar.pendingRenameMailboxID {
+                Task {
+                    do {
+                        try await provider.renameMailbox(mailboxID: mailboxID, newName: name)
+                        await session.loadMailboxes()
+                        await showToast("Папка переименована в «\(name)»")
+                    } catch {
+                        await showToast("Не удалось переименовать папку")
+                    }
+                    sidebar.pendingFolderName = nil
+                }
+            }
+        }
         .onDisappear {
             classificationProgress.unbind()
+            syncProgress.unbind()
             session.stopNetworkMonitoring()
             session.closeSession()
         }
@@ -488,6 +592,13 @@ public struct AccountWindowScene: View {
                         : nil,
                     translate: translator != nil
                         ? { Task { await performTranslation(body: body) } }
+                        : nil,
+                    // MailAi-9fi0: кнопка «Восстановить» видна только в Trash.
+                    restore: session.isInTrash
+                        ? {
+                            guard let id = session.selectedMessageID else { return }
+                            Task { await session.restore(messageIDs: [id]) }
+                        }
                         : nil
                 ))
                 .confirmationDialog("Отписаться от рассылки?", isPresented: $showUnsubscribeConfirm) {
@@ -686,9 +797,86 @@ public struct AccountWindowScene: View {
                 }
             }
             .keyboardShortcut("z", modifiers: [.command])
+            // MailAi-spo9: E — архивировать текущее письмо (как в Apple Mail).
+            Button("Archive") {
+                Task { await session.perform(.archive) }
+            }
+            .keyboardShortcut("e", modifiers: [])
+            .disabled(session.selectedMessageID == nil)
+            // MailAi-9fi0: Восстановить из Trash.
+            Button("Restore from Trash") {
+                guard let id = session.selectedMessageID else { return }
+                Task { await session.restore(messageIDs: [id]) }
+            }
+            .keyboardShortcut("u", modifiers: [.command, .shift])
+            .disabled(!session.isInTrash || session.selectedMessageID == nil)
         }
         .opacity(0)
         .frame(width: 0, height: 0)
         .accessibilityHidden(true)
+    }
+
+    // MARK: - MailAi-6xac: Mailbox folder management
+
+    /// Обрабатывает действие управления папкой из контекстного меню сайдбара.
+    ///
+    /// Действия CREATE/RENAME/DELETE делегируются `MailboxActionsProvider`,
+    /// если `session.provider` его реализует. После успеха перезагружаем
+    /// список папок через `session.loadMailboxes()`.
+    private func handleMailboxAction(_ action: MailboxAction) {
+        guard let provider = session.provider as? any MailboxActionsProvider else {
+            Task { await showToast("Управление папками не поддерживается для этого аккаунта") }
+            return
+        }
+
+        switch action {
+        case .createFolder(let parentPath):
+            // Показываем диалог через SidebarViewModel; имя придёт через pendingFolderName
+            sidebar.beginCreateFolder(parentPath: parentPath)
+            // Наблюдаем за pendingFolderName через onChange в теле View.
+            // Реальный вызов IMAP-команды — в handlePendingFolderCreation().
+            _ = provider // держим ссылку, реальный вызов — в handlePendingCreate
+
+        case .renameFolder(let mailboxID, let currentName):
+            sidebar.beginRenameFolder(mailboxID: mailboxID, currentName: currentName)
+            _ = provider
+
+        case .deleteFolder(let mailboxID, let name):
+            let mailboxActions = provider
+            Task {
+                do {
+                    try await mailboxActions.deleteMailbox(mailboxID: mailboxID)
+                    await session.loadMailboxes()
+                    await showToast("Папка «\(name)» удалена")
+                } catch {
+                    await showToast("Не удалось удалить папку «\(name)»")
+                }
+            }
+        }
+    }
+
+    // MARK: - Next Unread (Space)
+
+    /// Перемещает выделение на следующее непрочитанное письмо после текущего.
+    /// Если текущего нет или достигнут конец списка — переходит к первому непрочитанному.
+    private func selectNextUnread() {
+        let list = displayedMessages
+        guard !list.isEmpty else { return }
+
+        if let current = session.selectedMessageID,
+           let currentIdx = list.firstIndex(where: { $0.id == current }) {
+            // Ищем следующее непрочитанное после текущей позиции.
+            let tail = list[(currentIdx + 1)...].first(where: { !$0.flags.contains(.seen) })
+            if let next = tail {
+                session.selectedMessageID = next.id
+                session.open(messageID: next.id)
+                return
+            }
+        }
+        // Нет текущего или конец — идём к первому непрочитанному.
+        if let firstUnread = list.first(where: { !$0.flags.contains(.seen) }) {
+            session.selectedMessageID = firstUnread.id
+            session.open(messageID: firstUnread.id)
+        }
     }
 }
