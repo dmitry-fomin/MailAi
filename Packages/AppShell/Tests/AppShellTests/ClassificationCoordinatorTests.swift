@@ -10,7 +10,7 @@ import AI
 /// Stub AIProvider, отдающий заранее заданный JSON.
 struct StubProvider: AIProvider {
     let payload: String
-    func complete(system: String, user: String, streaming: Bool)
+    func complete(system: String, user: String, streaming: Bool, maxTokens: Int = 200)
         -> AsyncThrowingStream<String, any Error> {
         let p = payload
         return AsyncThrowingStream { continuation in

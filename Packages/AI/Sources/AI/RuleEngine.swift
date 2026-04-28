@@ -68,7 +68,14 @@ public actor RuleEngine {
     public func observeRules() -> AsyncStream<[Rule]> {
         let id = UUID()
         return AsyncStream { continuation in
-            self.storeContinuation(continuation, id: id)
+            // onTermination вызывается из произвольного контекста —
+            // используем Task, чтобы переключиться в изоляцию актора.
+            continuation.onTermination = { [weak self] _ in
+                Task { await self?.removeObserver(id: id) }
+            }
+            // storeContinuation — actor-метод; вызываем через Task,
+            // чтобы не нарушать actor isolation из замыкания инициализатора.
+            Task { await self.storeContinuation(continuation, id: id) }
         }
     }
 
@@ -78,8 +85,14 @@ public actor RuleEngine {
         continuations[id] = continuation
     }
 
-    /// Отписка: вызывается потребителем для освобождения ресурсов.
+    /// Отписка: вызывается автоматически при завершении стрима через onTermination,
+    /// либо явно потребителем для немедленного освобождения ресурсов.
     public func unsubscribe(id: UUID) {
+        continuations.removeValue(forKey: id)
+    }
+
+    /// Внутренний метод для onTermination-колбека.
+    private func removeObserver(id: UUID) {
         continuations.removeValue(forKey: id)
     }
 

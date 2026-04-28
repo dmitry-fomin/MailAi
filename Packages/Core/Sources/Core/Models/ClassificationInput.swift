@@ -26,7 +26,9 @@ public struct ClassificationInput: Sendable, Equatable {
         bodySnippet: String,
         activeRules: [Rule]
     ) {
-        precondition(
+        // assert вместо precondition: проверка активна только в Debug/Testing,
+        // не роняет production-сборку при неожиданном размере snippet'а.
+        assert(
             bodySnippet.count == Self.snippetLength || bodySnippet.isEmpty,
             "bodySnippet must be exactly \(Self.snippetLength) chars or empty, got \(bodySnippet.count)"
         )
@@ -38,5 +40,33 @@ public struct ClassificationInput: Sendable, Equatable {
         self.contentType = contentType
         self.bodySnippet = bodySnippet
         self.activeRules = activeRules
+    }
+
+    /// Фабричный метод: гарантирует правильный размер snippet'а независимо от источника.
+    /// Усекает до `snippetLength` символов или паддирует пробелами, если snippet короче.
+    public static func make(
+        from: String,
+        to: [String],
+        subject: String,
+        date: Date,
+        listUnsubscribe: Bool,
+        contentType: String,
+        rawBodySnippet: String,
+        activeRules: [Rule]
+    ) -> ClassificationInput {
+        let count = rawBodySnippet.count
+        let snippet: String
+        if count == snippetLength || rawBodySnippet.isEmpty {
+            snippet = rawBodySnippet
+        } else if count > snippetLength {
+            snippet = String(rawBodySnippet.prefix(snippetLength))
+        } else {
+            snippet = rawBodySnippet + String(repeating: " ", count: snippetLength - count)
+        }
+        return ClassificationInput(
+            from: from, to: to, subject: subject, date: date,
+            listUnsubscribe: listUnsubscribe, contentType: contentType,
+            bodySnippet: snippet, activeRules: activeRules
+        )
     }
 }

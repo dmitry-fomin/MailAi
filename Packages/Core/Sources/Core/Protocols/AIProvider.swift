@@ -6,10 +6,13 @@ public protocol AIProvider: Sendable {
     /// Делает chat-completion запрос к AI. Если `streaming == true`, отдаёт
     /// дельты по мере поступления. Если `false`, отдаёт один чанк с полным
     /// ответом.
+    /// - Parameter maxTokens: Максимальное число токенов в ответе. Дефолт 200
+    ///   подходит для классификации; для перевода используй 1024+.
     func complete(
         system: String,
         user: String,
-        streaming: Bool
+        streaming: Bool,
+        maxTokens: Int
     ) -> AsyncThrowingStream<String, any Error>
 }
 

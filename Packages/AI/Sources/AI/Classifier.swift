@@ -26,7 +26,8 @@ public actor Classifier {
         for try await chunk in provider.complete(
             system: prompt.system,
             user: prompt.user,
-            streaming: false
+            streaming: false,
+            maxTokens: 200
         ) {
             buffer += chunk
         }
@@ -35,8 +36,15 @@ public actor Classifier {
         let parsed = try parseJSON(buffer)
         let durationMs = Int(Date().timeIntervalSince(started) * 1000)
 
+        let importance: Importance
+        switch parsed.importance {
+        case "important": importance = .important
+        case "unimportant": importance = .unimportant
+        default: importance = .unknown
+        }
+
         return ClassificationResult(
-            importance: parsed.importance == "important" ? .important : .unimportant,
+            importance: importance,
             confidence: parsed.confidence,
             matchedRule: nil,
             reasoning: parsed.reasoning,
@@ -68,16 +76,27 @@ public actor Classifier {
 
     static func extractJSONObject(_ text: String) -> String {
         // Модель может обернуть JSON в ```json ... ``` или добавить текст вокруг.
-        // Находим первую `{` и соответствующую ей закрывающую `}`.
+        // Находим первую `{` и соответствующую ей закрывающую `}`,
+        // при этом игнорируем `{`/`}` внутри JSON-строковых литералов.
         guard let start = text.firstIndex(of: "{") else { return text }
         var depth = 0
         var end: String.Index?
+        var inString = false
+        var escaped = false
         for idx in text.indices[start...] {
             let ch = text[idx]
-            if ch == "{" { depth += 1 }
-            else if ch == "}" {
-                depth -= 1
-                if depth == 0 { end = idx; break }
+            if escaped {
+                escaped = false
+            } else if ch == "\\" && inString {
+                escaped = true
+            } else if ch == "\"" {
+                inString = !inString
+            } else if !inString {
+                if ch == "{" { depth += 1 }
+                else if ch == "}" {
+                    depth -= 1
+                    if depth == 0 { end = idx; break }
+                }
             }
         }
         guard let end else { return text }

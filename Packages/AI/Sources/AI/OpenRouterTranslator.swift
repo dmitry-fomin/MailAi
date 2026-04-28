@@ -11,15 +11,23 @@ public actor OpenRouterTranslator: AITranslator {
         self.client = client
     }
 
+    /// Максимальное число символов тела письма, отправляемых в AI.
+    /// Ограничивает расход токенов и соответствует privacy-требованиям.
+    public static let maxBodyLength = 4_000
+
     /// Переводит `body` на указанный `targetLanguage`.
     ///
     /// Системный промпт загружается из `PromptStore` по идентификатору `"translate"`.
     /// Если промпт не найден — используется встроенный фоллбек.
+    /// Тело письма усекается до `maxBodyLength` символов перед отправкой.
     public func translate(body: String, targetLanguage: String) async throws -> MailTranslation {
         let systemPrompt = await buildSystemPrompt(targetLanguage: targetLanguage)
+        let truncatedBody = body.count > Self.maxBodyLength
+            ? String(body.prefix(Self.maxBodyLength))
+            : body
 
         var fullResponse = ""
-        let stream = client.complete(system: systemPrompt, user: body, streaming: false)
+        let stream = client.complete(system: systemPrompt, user: truncatedBody, streaming: false, maxTokens: 1_024)
         for try await chunk in stream {
             fullResponse += chunk
         }

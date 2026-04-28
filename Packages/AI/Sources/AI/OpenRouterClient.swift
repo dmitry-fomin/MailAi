@@ -31,29 +31,33 @@ public struct OpenRouterClient: AIProvider, Sendable {
     public func complete(
         system: String,
         user: String,
-        streaming: Bool
+        streaming: Bool,
+        maxTokens: Int = 200
     ) -> AsyncThrowingStream<String, any Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    let request = try buildRequest(system: system, user: user, streaming: streaming)
-                    if streaming {
-                        try await runStreaming(request: request, continuation: continuation)
-                    } else {
-                        try await runSingle(request: request, continuation: continuation)
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
+        // Используем makeStream() чтобы назначить onTermination ДО старта Task,
+        // исключая race condition когда стрим завершается раньше назначения колбека.
+        let (stream, continuation) = AsyncThrowingStream.makeStream(of: String.self)
+        let client = self
+        let task = Task {
+            do {
+                let request = try client.buildRequest(system: system, user: user, streaming: streaming, maxTokens: maxTokens)
+                if streaming {
+                    try await client.runStreaming(request: request, continuation: continuation)
+                } else {
+                    try await client.runSingle(request: request, continuation: continuation)
                 }
+                continuation.finish()
+            } catch {
+                continuation.finish(throwing: error)
             }
-            continuation.onTermination = { _ in task.cancel() }
         }
+        continuation.onTermination = { _ in task.cancel() }
+        return stream
     }
 
     // MARK: - Private
 
-    private func buildRequest(system: String, user: String, streaming: Bool) throws -> URLRequest {
+    private func buildRequest(system: String, user: String, streaming: Bool, maxTokens: Int = 200) throws -> URLRequest {
         var req = URLRequest(url: Self.endpoint)
         req.httpMethod = "POST"
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -70,7 +74,7 @@ public struct OpenRouterClient: AIProvider, Sendable {
             ],
             stream: streaming,
             temperature: 0.2,
-            maxTokens: 200
+            maxTokens: maxTokens
         )
         req.httpBody = try JSONEncoder().encode(body)
         return req
@@ -86,8 +90,13 @@ public struct OpenRouterClient: AIProvider, Sendable {
             guard line.hasPrefix("data: ") else { continue }
             let payload = String(line.dropFirst(6))
             if payload == "[DONE]" { return }
-            guard let data = payload.data(using: .utf8),
-                  let delta = try? JSONDecoder().decode(StreamDelta.self, from: data),
+            guard let data = payload.data(using: .utf8) else { continue }
+            // OpenRouter может вернуть HTTP 200 с JSON-ошибкой вместо дельты.
+            // Проверяем ErrorResponse перед попыткой декодировать StreamDelta.
+            if let errorResponse = try? JSONDecoder().decode(APIErrorResponse.self, from: data) {
+                throw OpenRouterError.apiError(errorResponse.error.message)
+            }
+            guard let delta = try? JSONDecoder().decode(StreamDelta.self, from: data),
                   let content = delta.choices.first?.delta.content,
                   !content.isEmpty else { continue }
             continuation.yield(content)
@@ -101,8 +110,17 @@ public struct OpenRouterClient: AIProvider, Sendable {
         let (data, response) = try await session.data(for: request)
         try validate(response)
         let decoded = try JSONDecoder().decode(NonStreamResponse.self, from: data)
-        if let content = decoded.choices.first?.message.content {
-            continuation.yield(content)
+        if let choice = decoded.choices.first {
+            // Предупреждаем о truncation: ответ был обрезан из-за лимита токенов.
+            if choice.finishReason == "length" {
+                // Логируем как предупреждение — не бросаем ошибку, чтобы
+                // не нарушать работу классификатора при частичных ответах.
+                // В будущем можно заменить на специальную ошибку OpenRouterError.truncated.
+                print("[OpenRouterClient] WARNING: response truncated (finish_reason=length)")
+            }
+            if !choice.message.content.isEmpty {
+                continuation.yield(choice.message.content)
+            }
         }
     }
 
@@ -130,6 +148,8 @@ public enum OpenRouterError: Error, Equatable, Sendable {
     case rateLimited
     case serverError(Int)
     case httpError(Int)
+    /// OpenRouter вернул HTTP 200, но с JSON-объектом ошибки ({"error": {"message": "..."}}).
+    case apiError(String)
 }
 
 // MARK: - Wire types
@@ -158,12 +178,25 @@ struct StreamDelta: Decodable {
     struct Delta: Decodable { let content: String? }
 }
 
+/// Ответ OpenRouter при ошибке в теле (HTTP 200 + {"error": {...}}).
+struct APIErrorResponse: Decodable {
+    let error: APIError
+    struct APIError: Decodable {
+        let message: String
+    }
+}
+
 struct NonStreamResponse: Decodable {
     let choices: [Choice]
     let usage: Usage?
     struct Choice: Decodable {
         let message: Message
+        let finishReason: String?
         struct Message: Decodable { let content: String }
+        enum CodingKeys: String, CodingKey {
+            case message
+            case finishReason = "finish_reason"
+        }
     }
     struct Usage: Decodable {
         let promptTokens: Int
