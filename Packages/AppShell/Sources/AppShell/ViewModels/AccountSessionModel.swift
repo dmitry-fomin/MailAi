@@ -133,10 +133,13 @@ public final class AccountSessionModel: ObservableObject {
     /// публикует как `openBody`. При закрытии письма — тело уходит в nil.
     public func open(messageID: Message.ID?) {
         bodyTask?.cancel()
-        openBody = nil
-        guard let id = messageID else { return }
-        let provider = self.provider
-        bodyTask = Task { [weak self] in
+        // Мутации @Published откладываем на следующий тик event loop,
+        // чтобы не триггерить objectWillChange во время view update.
+        bodyTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.openBody = nil
+            guard let id = messageID else { return }
+            let provider = self.provider
             var bytes: [UInt8] = []
             do {
                 for try await chunk in provider.body(for: id) {
@@ -144,14 +147,11 @@ public final class AccountSessionModel: ObservableObject {
                     if Task.isCancelled { return }
                 }
             } catch {
-                await MainActor.run { [weak self] in self?.lastError = .network(.unknown) }
+                self.lastError = .network(.unknown)
                 return
             }
             let text = String(bytes: bytes, encoding: .utf8) ?? ""
-            let body = MessageBody(messageID: id, content: .plain(text))
-            await MainActor.run { [weak self] in
-                self?.openBody = body
-            }
+            self.openBody = MessageBody(messageID: id, content: .plain(text))
         }
     }
 

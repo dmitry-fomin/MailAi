@@ -73,9 +73,8 @@ public actor RuleEngine {
             continuation.onTermination = { [weak self] _ in
                 Task { await self?.removeObserver(id: id) }
             }
-            // storeContinuation — actor-метод; вызываем через Task,
-            // чтобы не нарушать actor isolation из замыкания инициализатора.
-            Task { await self.storeContinuation(continuation, id: id) }
+            // Task наследует изоляцию актора — await не нужен.
+            Task { self.storeContinuation(continuation, id: id) }
         }
     }
 
