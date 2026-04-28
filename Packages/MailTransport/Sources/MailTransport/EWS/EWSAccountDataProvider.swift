@@ -37,17 +37,24 @@ public final class EWSAccountDataProvider: AccountDataProvider, MailActionsProvi
         let folders = try await client.getFolders(ids: distinguished)
         var mailboxes = folders.map { makeMailbox(from: $0) }
 
-        // Дочерние папки inbox
-        if let inboxFolder = folders.first(where: { _ in true }) {
-            let children = (try? await client.findSubfolders(parentID: inboxFolder.id)) ?? []
-            let childMailboxes = children.map { makeMailbox(from: $0) }
+        // Дочерние папки inbox — ищем именно Inbox по displayName (case-insensitive),
+        // а не первую попавшуюся папку (порядок ответа от Exchange не гарантирован).
+        let inboxFolder = folders.first(where: {
+            Self.guessRole(displayName: $0.displayName) == .inbox
+        }) ?? folders.first(where: { $0.displayName.lowercased() == "inbox" })
+        var childFolders: [EWSFolder] = []
+        if let inboxFolder {
+            childFolders = (try? await client.findSubfolders(parentID: inboxFolder.id)) ?? []
+            let childMailboxes = childFolders.map { makeMailbox(from: $0) }
             if !childMailboxes.isEmpty {
                 // Добавляем как плоский список (UI рендерит без вложенности пока)
                 mailboxes.append(contentsOf: childMailboxes)
             }
         }
 
-        await folderCache.update(from: mailboxes.map { $0 }, ewsFolders: folders)
+        // Передаём все EWSFolder в кеш — маппинг происходит по folder.id, а не по позиции.
+        let allEWSFolders = folders + childFolders
+        await folderCache.update(from: mailboxes, ewsFolders: allEWSFolders)
         return mailboxes
     }
 
@@ -258,8 +265,14 @@ private actor FolderCache {
     private var itemRefs: [Message.ID: (String, String)] = [:]  // Message.ID → (ewsItemID, changeKey)
 
     func update(from mailboxes: [Mailbox], ewsFolders: [EWSFolder]) {
-        for (mailbox, folder) in zip(mailboxes, ewsFolders) {
-            folderIDMap[mailbox.id] = folder.id
+        // Строим словарь EWS folder.id → EWSFolder для маппинга по ID, а не по позиции.
+        // Mailbox.ID создаётся из folder.id (см. makeMailbox), поэтому ключ совпадает.
+        let folderByID = Dictionary(uniqueKeysWithValues: ewsFolders.map { ($0.id, $0) })
+        for mailbox in mailboxes {
+            // Mailbox.ID.rawValue == EWSFolder.id (см. makeMailbox)
+            if let folder = folderByID[mailbox.id.rawValue] {
+                folderIDMap[mailbox.id] = folder.id
+            }
         }
     }
 

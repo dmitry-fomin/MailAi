@@ -37,10 +37,13 @@ public actor LocalSearcher {
                     matchParts.append(Self.quote(freeText) + "*")
                 }
                 if let from = query.from {
-                    matchParts.append("from_address:" + Self.quote(from) + "* OR from_name:" + Self.quote(from) + "*")
+                    // FTS5 column group синтаксис: {col1 col2}: term*
+                    let term = Self.quote(from)
+                    matchParts.append("{from_address from_name}: \(term)*")
                 }
                 clauses.append("message_fts MATCH ?")
-                args.append(matchParts.joined(separator: " "))
+                // Несколько термов объединяем через AND, иначе FTS5 даёт некорректный MATCH.
+                args.append(matchParts.joined(separator: " AND "))
             }
 
             clauses.append("m.account_id = ?")
@@ -77,7 +80,13 @@ public actor LocalSearcher {
             if !clauses.isEmpty {
                 sql += " WHERE " + clauses.joined(separator: " AND ")
             }
-            sql += " ORDER BY m.date DESC LIMIT ?"
+            // При FTS-поиске сортируем сначала по релевантности (rank), затем по дате.
+            // Когда FTS-джойна нет (только фильтры), rank недоступен — сортируем только по дате.
+            if !freeText.isEmpty || query.from != nil {
+                sql += " ORDER BY rank, m.date DESC LIMIT ?"
+            } else {
+                sql += " ORDER BY m.date DESC LIMIT ?"
+            }
             args.append(limit)
 
             let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args))

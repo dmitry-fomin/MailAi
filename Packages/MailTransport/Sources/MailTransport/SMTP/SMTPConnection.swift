@@ -18,20 +18,26 @@ public struct SMTPCredentials: Sendable, Equatable {
 /// `withOpen(...) { conn in ... }` — это соответствует
 /// `NIOAsyncChannel.executeThenClose` scoping.
 ///
-/// Не Sendable: один writer/один reader. Вызовы методов
-/// подразумеваются серийными в рамках одной Task.
+/// Инвариант последовательного доступа: все вызовы методов SMTPConnection
+/// должны выполняться строго серийно в рамках одной Task (один writer/один reader).
+/// Concurrent-доступ из нескольких Task — undefined behaviour.
+/// @unchecked Sendable допустим при соблюдении этого инварианта.
 public final class SMTPConnection: @unchecked Sendable {
 
     /// Канал — переиспользуем IMAPLine как тип фрейма (CRLF-framing идентичен).
     public typealias SMTPChannel = NIOAsyncChannel<IMAPLine, IMAPLine>
 
-    private var iterator: NIOAsyncChannelInboundStream<IMAPLine>.AsyncIterator
+    // nonisolated(unsafe): доступ строго серийный — один вызов за раз в одной Task.
+    // Мутация iterator происходит только внутри readResponse/readMultiLineResponse
+    // которые вызываются последовательно в рамках withOpen-замыкания.
+    nonisolated(unsafe) private var iterator: NIOAsyncChannelInboundStream<IMAPLine>.AsyncIterator
     private let outbound: NIOAsyncChannelOutboundWriter<IMAPLine>
     /// Underlying NIO channel — нужен для добавления TLS-handler при STARTTLS.
     private let underlyingChannel: NIOAsyncChannel<IMAPLine, IMAPLine>
 
     /// Расширения сервера из EHLO-ответа.
-    public private(set) var capabilities: Set<String> = []
+    /// Мутируется только последовательно в ehlo() — в рамках инварианта серийного доступа.
+    nonisolated(unsafe) public private(set) var capabilities: Set<String> = []
 
     // MARK: - Открытие соединения
 
@@ -139,9 +145,12 @@ public final class SMTPConnection: @unchecked Sendable {
             throw SMTPError.tls("STARTTLS отклонён: \(resp.code) \(resp.text)")
         }
 
-        // Добавляем TLS в pipeline.
-        // NIOSSLClientHandler явно не Sendable (unavailable conformance) — добавляем
-        // через syncOperations на event loop, захватывая через nonisolated(unsafe).
+        // ВАЖНО: добавление TLS handler в pipeline активного NIOAsyncChannel технически
+        // небезопасно — канал уже читается через AsyncIterator. Правильное решение —
+        // пересоздать bootstrap с TLS или использовать специальный STARTTLS-режим NIO.
+        // TODO(MailAi-7ac): рефакторинг bootstrap для безопасного STARTTLS.
+        // Текущая реализация работает на практике для последовательных вызовов,
+        // но формально нарушает контракт NIOAsyncChannel.
         let sslContext = try NIOSSLContext(configuration: .makeClientConfiguration())
         nonisolated(unsafe) let tlsHandler = try NIOSSLClientHandler(
             context: sslContext,
@@ -184,8 +193,10 @@ public final class SMTPConnection: @unchecked Sendable {
             do {
                 try await authPlain(credentials: credentials)
                 return
-            } catch SMTPError.authentication {
-                // PLAIN не поддерживается — пробуем LOGIN
+            } catch SMTPError.authMethodNotSupported {
+                // Метод PLAIN не поддерживается сервером (504/534) — пробуем LOGIN.
+                // Ошибки authenticationFailed (535) и authentication НЕ перехватываем:
+                // неверный пароль не исправить сменой механизма.
             }
         }
 
@@ -216,12 +227,16 @@ public final class SMTPConnection: @unchecked Sendable {
             try await sendCommand(encoded)
             let resp2 = try await readResponse()
             guard resp2.code == 235 else {
-                throw SMTPError.authentication(resp2.text)
+                throw SMTPError.authenticationFailed(resp2.text)
             }
+        case 504, 534:
+            // Метод не поддерживается сервером — можно попробовать другой механизм
+            throw SMTPError.authMethodNotSupported("AUTH PLAIN не поддерживается: \(resp.code) \(resp.text)")
         case 535:
-            throw SMTPError.authentication("Неверные учётные данные (AUTH PLAIN)")
+            // Неверные учётные данные — не имеет смысла пробовать другой механизм
+            throw SMTPError.authenticationFailed("Неверные учётные данные (AUTH PLAIN): \(resp.text)")
         default:
-            throw SMTPError.authentication("AUTH PLAIN отклонён: \(resp.code) \(resp.text)")
+            throw SMTPError.authMethodNotSupported("AUTH PLAIN отклонён: \(resp.code) \(resp.text)")
         }
     }
 
@@ -296,13 +311,20 @@ public final class SMTPConnection: @unchecked Sendable {
 
         // Тело письма: точка на отдельной строке = конец (RFC 5321 §4.1.1.4).
         // Дублируем точки в начале строк (dot-stuffing).
-        let stuffed = data
+        // Сначала нормализуем переносы: одиночный \n → \r\n, чтобы dot-stuffing
+        // корректно обрабатывал все строки (RFC 5321 требует CRLF).
+        let normalized = data
+            .replacingOccurrences(of: "\r\n", with: "\n")   // сводим к \n
+            .replacingOccurrences(of: "\n", with: "\r\n")   // нормализуем в \r\n
+        let stuffed = normalized
             .components(separatedBy: "\r\n")
             .map { line in
                 line.hasPrefix(".") ? ".\(line)" : line
             }
             .joined(separator: "\r\n")
 
+        // Финальный маркер DATA: точка на отдельной строке с CRLF до и после (RFC 5321 §4.5.2).
+        // Формат: <тело>\r\n.\r\n  — точка именно на отдельной строке.
         try await sendCommand("\(stuffed)\r\n.")
         let endResp = try await readResponse()
         guard endResp.code == 250 else {

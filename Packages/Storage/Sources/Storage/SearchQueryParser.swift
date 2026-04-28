@@ -45,12 +45,12 @@ public struct SearchQuery: Sendable, Equatable {
 }
 
 public enum SearchQueryParser {
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.calendar = Calendar(identifier: .gregorian)
-        f.locale = Locale(identifier: "en_US_POSIX")
+    // ISO8601DateFormatter потокобезопасен (в отличие от DateFormatter),
+    // поэтому безопасен как static-синглтон при strict concurrency.
+    private static let dateFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withFullDate, .withDashSeparatorInDate]
         f.timeZone = TimeZone(identifier: "UTC")
-        f.dateFormat = "yyyy-MM-dd"
         return f
     }()
 

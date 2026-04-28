@@ -252,6 +252,7 @@ public actor EWSClient {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 15
         let session = URLSession(configuration: config)
+        defer { session.finishTasksAndInvalidate() }
 
         for urlString in candidates {
             guard let url = URL(string: urlString) else { continue }

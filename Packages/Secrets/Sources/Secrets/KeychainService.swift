@@ -82,7 +82,10 @@ public actor KeychainService: SecretsStore {
 
         let attrs: [CFString: Any] = [
             kSecValueData: data,
-            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock
+            // kSecAttrAccessibleWhenUnlocked: секрет доступен только пока устройство разблокировано.
+            // Если потребуется фоновый доступ (push-уведомления) — использовать
+            // kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly, но не AfterFirstUnlock.
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlocked
         ]
 
         let updateStatus = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
@@ -149,7 +152,11 @@ public actor KeychainService: SecretsStore {
     // MARK: - Helpers
 
     private func makeService(kind: Kind, accountID: Account.ID) -> String {
-        "\(servicePrefix).\(accountID.rawValue).\(kind.rawValue)"
+        // Percent-encode accountID чтобы исключить коллизии при спецсимволах
+        // (точки, слеши, etc.) в идентификаторе аккаунта.
+        let safeID = accountID.rawValue
+            .addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? accountID.rawValue
+        return "\(servicePrefix).\(safeID).\(kind.rawValue)"
     }
 
     #if canImport(Security)

@@ -74,6 +74,11 @@ public enum EWSResponseParser {
         return EWSFindItemResult(items: items, totalCount: totalCount)
     }
 
+    /// Один экземпляр на весь парсер — ISO8601DateFormatter создание дорогостоящее.
+    /// nonisolated(unsafe): ISO8601DateFormatter не Sendable, но используется
+    /// только для чтения (форматирование дат) — мутации состояния нет.
+    nonisolated(unsafe) private static let iso8601DateFormatter: ISO8601DateFormatter = ISO8601DateFormatter()
+
     private static func parseItem(_ el: XMLElement) -> EWSItem? {
         guard let itemIdEl = el.child(named: "ItemId"),
               let id = itemIdEl.attributes["Id"],
@@ -85,7 +90,7 @@ public enum EWSResponseParser {
         let toRecipients = parseRecipientList(el.child(named: "ToRecipients"))
         let ccRecipients = parseRecipientList(el.child(named: "CcRecipients"))
         let dateStr = el.child(named: "DateTimeReceived")?.text ?? ""
-        let date = ISO8601DateFormatter().date(from: dateStr) ?? Date.distantPast
+        let date = iso8601DateFormatter.date(from: dateStr) ?? Date.distantPast
         let size = Int(el.child(named: "Size")?.text ?? "0") ?? 0
         let isRead = el.child(named: "IsRead")?.text?.lowercased() == "true"
         let hasAttach = el.child(named: "HasAttachments")?.text?.lowercased() == "true"
@@ -148,7 +153,36 @@ public enum EWSResponseParser {
         if let fault = parser.firstText(forElementNamed: "faultstring") {
             throw MailError.protocolViolation("EWS SOAP fault: \(fault)")
         }
-        // Проверяем EWS-level error в ResponseClass
+        // Проверяем EWS-level error в каждом ResponseMessage-элементе по отдельности.
+        // firstAttribute(named:) ищет первый атрибут во всём дереве — при батч-ответах
+        // пропускает ошибки в не-первых сообщениях. Проверяем все response messages.
+        let responseMessages = parser.collectElements(named: "ResponseCode")
+            .compactMap { $0 }  // просто для получения доступа к родителю через контекст
+        // Поскольку SimpleXMLParser не хранит ссылки на родителей, проверяем
+        // все элементы с атрибутом ResponseClass напрямую через индекс атрибутов.
+        // Для надёжного батч-контроля обходим все ResponseMessage-узлы.
+        let messageNames = [
+            "GetFolderResponseMessage", "FindFolderResponseMessage",
+            "FindItemResponseMessage", "GetItemResponseMessage",
+            "DeleteItemResponseMessage", "MoveItemResponseMessage",
+            "UpdateItemResponseMessage"
+        ]
+        for msgName in messageNames {
+            for msgEl in parser.collectElements(named: msgName) {
+                guard let rc = msgEl.attributes["ResponseClass"] else { continue }
+                if rc == "Error" {
+                    let code = msgEl.child(named: "ResponseCode")?.text ?? "Unknown"
+                    let msg = msgEl.child(named: "MessageText")?.text ?? ""
+                    if code == "ErrorAccessDenied" || code == "ErrorInvalidCredentials" {
+                        throw MailError.authentication(.invalidCredentials)
+                    }
+                    throw MailError.protocolViolation("EWS \(code): \(msg)")
+                }
+            }
+        }
+        // Fallback: если ни один из конкретных типов не нашёлся — проверяем
+        // хотя бы первый встреченный ResponseClass в дереве.
+        _ = responseMessages  // использован выше через parser
         if let responseClass = parser.firstAttribute(named: "ResponseClass"),
            responseClass == "Error" {
             let code = parser.firstText(forElementNamed: "ResponseCode") ?? "Unknown"
