@@ -600,7 +600,7 @@ public actor IMAPIdleController {
 
         // Приоритет — команды (их нельзя потерять), затем timeout/idle.
         var commandHit: LoopAction?
-        var nonCommand: LoopAction = .timeout
+        let nonCommand: LoopAction = .timeout
         var sawCommandsClosed = false
         var sawIdle: LoopAction?
         var sawTimeout = false
