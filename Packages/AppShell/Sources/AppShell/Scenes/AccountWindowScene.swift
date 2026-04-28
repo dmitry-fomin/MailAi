@@ -16,6 +16,9 @@ public struct AccountWindowScene: View {
     /// напрямую.
     @FocusState private var focus: FocusZone?
 
+    /// Фильтр «только непрочитанные» в заголовке списка писем.
+    @State private var showOnlyUnread = false
+
     /// AI-5: pending-предложение нового правила (после drop письма на
     /// «Неважно» / «Важное»). nil — лист не показан.
     @State private var ruleProposal: RuleProposal?
@@ -266,7 +269,7 @@ public struct AccountWindowScene: View {
             Spacer()
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 4)
     }
 
     // MARK: - Message list
@@ -376,6 +379,13 @@ public struct AccountWindowScene: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                Toggle(isOn: $showOnlyUnread) {
+                    Image(systemName: "envelope.badge")
+                        .help("Только непрочитанные")
+                }
+                .toggleStyle(.button)
+                .tint(showOnlyUnread ? .accentColor : nil)
+                .buttonStyle(.borderless)
             }
             if session.searchService != nil {
                 HStack(spacing: 6) {
@@ -403,10 +413,12 @@ public struct AccountWindowScene: View {
         .padding(.vertical, 8)
     }
 
-    /// Активный список в текущем режиме: результаты поиска или папки.
+    /// Активный список в текущем режиме: результаты поиска или папки, с опциональным
+    /// фильтром «только непрочитанные».
     private var displayedMessages: [Message] {
         let q = session.searchQuery.trimmingCharacters(in: .whitespaces)
-        return q.isEmpty ? session.messages : session.searchResults
+        let base = q.isEmpty ? session.messages : session.searchResults
+        return showOnlyUnread ? base.filter { !$0.flags.contains(.seen) } : base
     }
 
     private var selectedMailboxName: String {
@@ -511,6 +523,7 @@ public struct AccountWindowScene: View {
                             content: .plain(translation.text),
                             attachments: body.attachments
                         ),
+                        onSaveAttachment: { att in saveAttachment(att) },
                         isFocused: Binding(
                             get: { focus == .reader },
                             set: { newValue in if newValue { focus = .reader } }
@@ -519,6 +532,7 @@ public struct AccountWindowScene: View {
                 } else {
                     ReaderBodyView(
                         body: body,
+                        onSaveAttachment: { att in saveAttachment(att) },
                         isFocused: Binding(
                             get: { focus == .reader },
                             set: { newValue in
@@ -570,6 +584,22 @@ public struct AccountWindowScene: View {
             showTranslation = true
         } catch {
             await showToast("Не удалось перевести письмо")
+        }
+    }
+
+    @MainActor
+    private func saveAttachment(_ attachment: Attachment) {
+        Task {
+            do {
+                let data = try await session.downloadAttachment(attachment)
+                let panel = NSSavePanel()
+                panel.nameFieldStringValue = attachment.filename.isEmpty ? "attachment" : attachment.filename
+                panel.canCreateDirectories = true
+                guard panel.runModal() == .OK, let url = panel.url else { return }
+                try data.write(to: url)
+            } catch {
+                await showToast("Не удалось скачать вложение")
+            }
         }
     }
 

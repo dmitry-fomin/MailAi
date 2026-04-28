@@ -243,6 +243,17 @@ public actor LiveAccountDataProvider {
         throw MailError.unsupported("threads — TODO фаза B")
     }
 
+    public func attachmentBytes(for attachment: Attachment, messageID: Message.ID) async throws -> Data {
+        guard let record = try await store.message(id: messageID) else {
+            throw MailError.messageNotFound(messageID)
+        }
+        let sess = try await ensureSession()
+        _ = try await sess.select(record.mailboxID.rawValue)
+        let section = attachment.partNumber ?? ""
+        let bytes = try await sess.fetchBody(uid: record.uid, section: section)
+        return Data(bytes)
+    }
+
     // MARK: - B6: синхронизация заголовков
 
     /// Результат батчевой синхронизации заголовков для диапазона UID.

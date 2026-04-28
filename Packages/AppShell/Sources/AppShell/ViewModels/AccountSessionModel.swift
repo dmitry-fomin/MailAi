@@ -129,12 +129,10 @@ public final class AccountSessionModel: ObservableObject {
         messagesTask = task
     }
 
-    /// Открывает письмо: подписывается на стрим тела, собирает в память,
-    /// публикует как `openBody`. При закрытии письма — тело уходит в nil.
+    /// Открывает письмо: стримит MIME-тело, парсит структуру (plain/html/вложения),
+    /// авто-помечает прочитанным. Тело живёт только в памяти пока письмо открыто.
     public func open(messageID: Message.ID?) {
         bodyTask?.cancel()
-        // Мутации @Published откладываем на следующий тик event loop,
-        // чтобы не триггерить objectWillChange во время view update.
         bodyTask = Task { @MainActor [weak self] in
             guard let self else { return }
             self.openBody = nil
@@ -150,9 +148,21 @@ public final class AccountSessionModel: ObservableObject {
                 self.lastError = .network(.unknown)
                 return
             }
-            let text = String(bytes: bytes, encoding: .utf8) ?? ""
-            self.openBody = MessageBody(messageID: id, content: .plain(text))
+            self.openBody = MIMEBodyParser.parse(bytes: bytes, messageID: id)
+
+            // Авто-пометка прочитанным при открытии письма
+            if let actions = provider as? any MailActionsProvider,
+               let msg = self.messages.first(where: { $0.id == id }),
+               !msg.flags.contains(.seen) {
+                try? await actions.setRead(true, messageID: id)
+                self.updateFlags(messageID: id) { $0.insert(.seen) }
+            }
         }
+    }
+
+    /// Загружает байты конкретного MIME-вложения. Данные не кешируются.
+    public func downloadAttachment(_ attachment: Attachment) async throws -> Data {
+        return try await provider.attachmentBytes(for: attachment, messageID: attachment.messageID)
     }
 
     /// Освобождает открытое тело и отменяет фоновые таски — инвариант

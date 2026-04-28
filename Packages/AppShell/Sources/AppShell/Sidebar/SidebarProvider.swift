@@ -85,20 +85,6 @@ public struct MockSidebarProvider: SidebarProvider {
             ]
         )
 
-        let onMac = SidebarSection(
-            id: .onMyMac,
-            title: "На моём Mac",
-            items: [
-                SidebarItem(
-                    id: .init("local-archive"),
-                    title: "Локальный архив",
-                    systemImage: "internaldrive",
-                    unreadCount: 0,
-                    kind: .localFolder(name: "Локальный архив")
-                )
-            ]
-        )
-
         let mailboxItems = mailboxes.map { mailbox in
             SidebarItem(
                 id: .init("mailbox-\(mailbox.id.rawValue)"),
@@ -114,6 +100,6 @@ public struct MockSidebarProvider: SidebarProvider {
             items: mailboxItems
         )
 
-        return [favorites, filtered, smart, onMac, accountSection]
+        return [favorites, filtered, smart, accountSection]
     }
 }

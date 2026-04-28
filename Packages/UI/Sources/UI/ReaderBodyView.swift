@@ -11,15 +11,18 @@ import Core
 public struct ReaderBodyView: View {
     public let messageBody: MessageBody
     public let attachments: [Attachment]
+    public var onSaveAttachment: (Attachment) -> Void
     @Binding public var isFocused: Bool
 
     public init(
         body: MessageBody,
         attachments: [Attachment] = [],
+        onSaveAttachment: @escaping (Attachment) -> Void = { _ in },
         isFocused: Binding<Bool> = .constant(false)
     ) {
         self.messageBody = body
         self.attachments = attachments
+        self.onSaveAttachment = onSaveAttachment
         self._isFocused = isFocused
     }
 
@@ -31,7 +34,10 @@ public struct ReaderBodyView: View {
                 if !attachments.isEmpty {
                     Divider()
                         .padding(.top, 8)
-                    AttachmentListView(attachments: attachments)
+                    AttachmentListView(
+                        attachments: attachments,
+                        onSaveAs: { onSaveAttachment($0) }
+                    )
                 }
             }
             .padding(16)

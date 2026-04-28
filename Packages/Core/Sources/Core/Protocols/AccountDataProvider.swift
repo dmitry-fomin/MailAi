@@ -34,4 +34,14 @@ public protocol AccountDataProvider: Sendable {
 
     /// Треды по конкретному mailbox'у.
     func threads(in mailbox: Mailbox.ID) async throws -> [MessageThread]
+
+    /// Байты конкретного MIME-вложения. По умолчанию — unsupported.
+    /// Переопределяется в `LiveAccountDataProvider`.
+    func attachmentBytes(for attachment: Attachment, messageID: Message.ID) async throws -> Data
+}
+
+extension AccountDataProvider {
+    public func attachmentBytes(for attachment: Attachment, messageID: Message.ID) async throws -> Data {
+        throw MailError.unsupported("attachmentBytes not supported by this provider")
+    }
 }
