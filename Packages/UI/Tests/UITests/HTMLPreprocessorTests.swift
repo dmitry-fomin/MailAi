@@ -74,6 +74,12 @@ final class HTMLPreprocessorTests: XCTestCase {
         XCTAssertTrue(result.html.contains("<details"))
     }
 
+    func testCollapsesOutlookQuoteWithSuffix() async {
+        let html = #"<p>Reply</p><div id="divRplyFwdMsg123"><p>Original</p></div>"#
+        let result = await HTMLPreprocessor().process(html, blockExternalImages: false)
+        XCTAssertTrue(result.html.contains("<details"))
+    }
+
     func testSummaryTextIsPreviousMessages() async {
         let html = #"<p>Hi</p><div class="gmail_quote"><p>Old</p></div>"#
         let result = await HTMLPreprocessor().process(html, blockExternalImages: false)

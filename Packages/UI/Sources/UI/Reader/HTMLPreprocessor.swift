@@ -79,7 +79,7 @@ public actor HTMLPreprocessor {
         result = wrapPattern(result, open: #"<div[^>]+class="[^"]*gmail_quote[^"]*""#, closeTag: "div")
         result = wrapPattern(result, open: #"<blockquote[^>]+type="cite""#, closeTag: "blockquote")
         result = wrapPattern(result, open: #"<div[^>]+class="[^"]*AppleOriginalContents[^"]*""#, closeTag: "div")
-        result = wrapPattern(result, open: #"<div[^>]+id="x?_?divRplyFwdMsg""#, closeTag: "div")
+        result = wrapPattern(result, open: #"<div[^>]+id="divRplyFwdMsg[^"]*""#, closeTag: "div")
         return result
     }
 
