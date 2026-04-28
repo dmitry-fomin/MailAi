@@ -22,7 +22,7 @@ public actor PromptStore {
             if FileManager.default.fileExists(atPath: userFile.path) {
                 return try String(contentsOf: userFile, encoding: .utf8)
             }
-            guard let url = Bundle.module.url(forResource: id, withExtension: "md", subdirectory: "Prompts") else {
+            guard let url = Bundle.module.url(forResource: id, withExtension: "md") else {
                 throw PromptStoreError.notFound(id)
             }
             return try String(contentsOf: url, encoding: .utf8)
@@ -42,14 +42,48 @@ public actor PromptStore {
         }.value
     }
 
-    /// Deletes user override, reverting to bundled default.
+    /// Copies all bundled prompts to userPromptsDir if they don't already exist.
+    /// Safe to call multiple times — skips existing files.
+    public func initializeDefaults() async throws {
+        let dir = userPromptsDir
+        try await Task.detached(priority: .utility) {
+            try FileManager.default.createDirectory(
+                at: dir,
+                withIntermediateDirectories: true
+            )
+            for entry in PromptEntry.allEntries {
+                let dest = dir.appendingPathComponent("\(entry.id).md")
+                guard !FileManager.default.fileExists(atPath: dest.path) else { continue }
+                guard let src = Bundle.module.url(
+                    forResource: entry.id,
+                    withExtension: "md"
+                ) else {
+                    throw PromptStoreError.notFound(entry.id)
+                }
+                try FileManager.default.copyItem(at: src, to: dest)
+            }
+        }.value
+    }
+
+    /// Restores the bundled default for the given prompt id, overwriting any user override.
     public func reset(id: String) async throws {
         let dir = userPromptsDir
         try await Task.detached(priority: .utility) {
-            let file = dir.appendingPathComponent("\(id).md")
-            if FileManager.default.fileExists(atPath: file.path) {
-                try FileManager.default.removeItem(at: file)
+            guard let src = Bundle.module.url(
+                forResource: id,
+                withExtension: "md"
+            ) else {
+                throw PromptStoreError.notFound(id)
             }
+            try FileManager.default.createDirectory(
+                at: dir,
+                withIntermediateDirectories: true
+            )
+            let dest = dir.appendingPathComponent("\(id).md")
+            if FileManager.default.fileExists(atPath: dest.path) {
+                try FileManager.default.removeItem(at: dest)
+            }
+            try FileManager.default.copyItem(at: src, to: dest)
         }.value
     }
 
