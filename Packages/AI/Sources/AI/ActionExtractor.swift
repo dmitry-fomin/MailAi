@@ -34,6 +34,9 @@ public actor ActionExtractor: AIActionExtractor {
 
     // MARK: - Private
 
+    /// Загружает инструкцию из PromptStore (с кешированием) и склеивает с
+    /// хардкоженым responseFormat. Разделение: инструкция живёт в .md и
+    /// редактируется пользователем; формат JSON — в коде рядом с парсером.
     private func resolveSystemPrompt() async throws -> String {
         if let cached = cachedSystemPrompt { return cached }
         let instruction = try await PromptStore.shared.load(id: "extract_actions")
@@ -42,6 +45,7 @@ public actor ActionExtractor: AIActionExtractor {
         return full
     }
 
+    /// JSON-схема ответа. Парсится через `RawItem` / `JSONDecoder`.
     private static let responseFormat = """
         Respond only with valid JSON array, no markdown, no explanation:
         [{"kind": "deadline|task|meeting|link|question", "text": "description", "dueDate": "ISO8601 or null"}]

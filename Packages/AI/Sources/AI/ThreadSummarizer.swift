@@ -44,6 +44,9 @@ public actor ThreadSummarizer: AISummarizer {
 
     // MARK: - Private
 
+    /// Загружает инструкцию из PromptStore (с кешированием) и склеивает с
+    /// хардкоженым responseFormat. Разделение: инструкция живёт в .md и
+    /// редактируется пользователем; формат JSON — в коде рядом с парсером.
     private func resolveSystemPrompt() async throws -> String {
         if let cached = cachedSystemPrompt { return cached }
         let instruction = try await PromptStore.shared.load(id: "summarize")
@@ -52,6 +55,7 @@ public actor ThreadSummarizer: AISummarizer {
         return full
     }
 
+    /// JSON-схема ответа. Парсится вызывающим кодом через `JSONDecoder`.
     private static let responseFormat = """
         Respond only with valid JSON, no markdown, no explanation:
         {"summary": "2-3 sentence summary of the thread", "participants": ["address1", "address2"], "keyPoints": ["point 1", "point 2"]}

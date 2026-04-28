@@ -1,5 +1,7 @@
 import Foundation
 
+/// Метаданные одного AI-промпта для UI и `PromptStore.initializeDefaults()`.
+/// `id` совпадает с именем `.md`-файла без расширения.
 public struct PromptEntry: Identifiable, Sendable {
     public let id: String
     public let icon: String

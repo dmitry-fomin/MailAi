@@ -1,10 +1,16 @@
 import Foundation
 
-/// Manages AI prompt files. User overrides stored in ~/.mailai/prompts/
-/// Falls back to bundled defaults when no override exists.
+/// Управляет `.md`-файлами AI-промптов.
 ///
-/// Все методы async — файловый I/O выполняется в detached-задаче с приоритетом
-/// .utility, чтобы не блокировать кооперативный thread pool актора.
+/// **Жизненный цикл:**
+/// 1. `initializeDefaults()` вызывается при старте — копирует бандловые `.md` в
+///    `~/.mailai/prompts/` (только если файла ещё нет).
+/// 2. `load(id:)` читает из `~/.mailai/prompts/`; если файл отсутствует —
+///    fallback на бандл (защита от ручного удаления).
+/// 3. Пользователь может редактировать файлы в `~/.mailai/prompts/` напрямую.
+/// 4. `reset(id:)` перезаписывает файл из бандла, откатывая правки.
+///
+/// Все методы async — I/O идёт в detached-задаче с приоритетом `.utility`.
 public actor PromptStore {
     public static let shared = PromptStore()
 
