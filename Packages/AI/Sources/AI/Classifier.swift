@@ -43,6 +43,11 @@ public actor Classifier {
         default: importance = .unknown
         }
 
+        let category = parsed.category.flatMap { MessageCategory(rawValue: $0) }
+        let tone = parsed.tone.flatMap { MessageTone(rawValue: $0) }
+        // Нормализуем язык до нижнего регистра и первых 2 символов ISO 639-1
+        let language = parsed.language.map { String($0.lowercased().prefix(2)) }
+
         return ClassificationResult(
             importance: importance,
             confidence: parsed.confidence,
@@ -50,7 +55,10 @@ public actor Classifier {
             reasoning: parsed.reasoning,
             tokensIn: Self.estimateTokens(prompt.system) + Self.estimateTokens(prompt.user),
             tokensOut: Self.estimateTokens(buffer),
-            durationMs: durationMs
+            durationMs: durationMs,
+            category: category,
+            language: language,
+            tone: tone
         )
     }
 
@@ -60,6 +68,9 @@ public actor Classifier {
         let importance: String
         let confidence: Double
         let reasoning: String
+        let category: String?
+        let language: String?
+        let tone: String?
     }
 
     private func parseJSON(_ text: String) throws -> ParsedJSON {

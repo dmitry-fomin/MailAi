@@ -13,6 +13,9 @@ public struct ReaderBodyView: View {
     @Binding public var isFocused: Bool
     @State private var processedEmail: ProcessedEmail?
     @State private var showImages: Bool = false
+    /// Масштаб текста для HTML-писем. 1.0 = 100%, 1.5 = 150%.
+    /// Читается из UserDefaults; обновляется без перезагрузки страницы.
+    @AppStorage("readerTextZoom") private var textZoom: Double = 1.0
 
     public init(
         body: MessageBody,
@@ -69,7 +72,8 @@ public struct ReaderBodyView: View {
                     MessageWebView(
                         processedEmail: email,
                         messageID: messageID,
-                        cacheManager: cacheManager
+                        cacheManager: cacheManager,
+                        textZoom: textZoom
                     )
                     .frame(maxWidth: .infinity, minHeight: 200)
                 }

@@ -113,5 +113,81 @@ final class HTMLPreprocessorTests: XCTestCase {
         XCTAssertTrue(result.html.contains("<head>") || result.html.contains("<head "))
         XCTAssertTrue(result.html.contains("<body>") || result.html.contains("<body "))
     }
+
+    // MARK: - Sanitization: scripts
+
+    func testRemovesInlineScript() async {
+        let html = #"<p>Hello</p><script>alert('xss')</script><p>World</p>"#
+        let result = await HTMLPreprocessor().process(html, blockExternalImages: false)
+        XCTAssertFalse(result.html.contains("<script"), "inline <script> should be removed")
+        XCTAssertFalse(result.html.contains("alert("), "script content should be removed")
+        XCTAssertTrue(result.html.contains("World"), "non-script content should remain")
+    }
+
+    func testRemovesScriptWithAttributes() async {
+        let html = #"<script type="text/javascript" src="evil.js"></script>"#
+        let result = await HTMLPreprocessor().process(html, blockExternalImages: false)
+        XCTAssertFalse(result.html.contains("<script"))
+    }
+
+    // MARK: - Sanitization: tracking pixels
+
+    func testRemovesTrackingPixelWidthOne() async {
+        let html = #"<p>Hi</p><img src="https://tracker.com/px" width="1" height="1"><p>Text</p>"#
+        let result = await HTMLPreprocessor().process(html, blockExternalImages: false)
+        XCTAssertFalse(result.html.contains("tracker.com/px"), "tracking pixel should be removed")
+        XCTAssertTrue(result.html.contains("Text"), "other content should remain")
+    }
+
+    func testRemovesTrackingPixelWidthZero() async {
+        let html = #"<img src="https://tracker.com/px" width="0" height="0">"#
+        let result = await HTMLPreprocessor().process(html, blockExternalImages: false)
+        XCTAssertFalse(result.html.contains("tracker.com/px"))
+    }
+
+    func testKeepsNormalImages() async {
+        let html = #"<img src="https://example.com/banner.jpg" width="600" height="200">"#
+        let result = await HTMLPreprocessor().process(html, blockExternalImages: false)
+        XCTAssertTrue(result.html.contains("banner.jpg"), "normal image should not be removed")
+    }
+
+    // MARK: - Sanitization: javascript hrefs
+
+    func testRemovesJavascriptHref() async {
+        let html = #"<a href="javascript:alert('xss')">Click</a>"#
+        let result = await HTMLPreprocessor().process(html, blockExternalImages: false)
+        XCTAssertFalse(result.html.lowercased().contains("javascript:"), "javascript: href should be removed")
+        XCTAssertTrue(result.html.contains("Click"), "link text should remain")
+    }
+
+    func testJavascriptHrefReplacedWithHash() async {
+        let html = #"<a href="javascript:void(0)">Link</a>"#
+        let result = await HTMLPreprocessor().process(html, blockExternalImages: false)
+        XCTAssertTrue(result.html.contains("href=\"#\""), "javascript: href should be replaced with #")
+    }
+
+    // MARK: - Sanitization: remote stylesheets
+
+    func testRemovesRemoteStylesheet() async {
+        let html = #"<link rel="stylesheet" href="https://evil.com/styles.css"><p>Text</p>"#
+        let result = await HTMLPreprocessor().process(html, blockExternalImages: false)
+        XCTAssertFalse(result.html.contains("evil.com/styles.css"), "remote stylesheet should be removed")
+        XCTAssertTrue(result.html.contains("Text"), "content should remain")
+    }
+
+    func testKeepsInlineStyle() async {
+        let html = #"<p style="color:red">Text</p>"#
+        let result = await HTMLPreprocessor().process(html, blockExternalImages: false)
+        XCTAssertTrue(result.html.contains("color:red"), "inline style should remain")
+    }
+
+    // MARK: - Sanitization: expression() in style
+
+    func testRemovesExpressionFromStyle() async {
+        let html = "<style>div { width: expression(alert(1)); }</style><p>Text</p>"
+        let result = await HTMLPreprocessor().process(html, blockExternalImages: false)
+        XCTAssertFalse(result.html.contains("expression("), "expression() should be removed from style")
+        XCTAssertTrue(result.html.contains("Text"))
+    }
 }
 #endif

@@ -89,7 +89,7 @@ public struct AccountWindowScene: View {
                     handleDrop(onKind: kind, messages: dropped)
                 }
             )
-            .frame(minWidth: 220)
+            .frame(minWidth: 200)
             .focused($focus, equals: .sidebar)
         } content: {
             Group {
@@ -99,11 +99,11 @@ public struct AccountWindowScene: View {
                     messageList
                 }
             }
-            .frame(minWidth: 320)
+            .frame(minWidth: 280)
             .focused($focus, equals: .list)
         } detail: {
             reader
-                .frame(minWidth: 480)
+                .frame(minWidth: 400)
                 .focused($focus, equals: .reader)
         }
         .navigationTitle(session.account.email)
@@ -519,13 +519,14 @@ public struct AccountWindowScene: View {
                     .padding(.vertical, 4)
                 }
                 if showTranslation, let translation = translatedBody {
+                    let translatedBody = MessageBody(
+                        messageID: body.messageID,
+                        content: .plain(translation.text),
+                        attachments: body.attachments
+                    )
                     ReaderBodyView(
-                        body: MessageBody(
-                            messageID: body.messageID,
-                            content: .plain(translation.text),
-                            attachments: body.attachments
-                        ),
-                        messageID: body.messageID.rawValue,
+                        body: translatedBody,
+                        messageID: translatedBody.messageID.rawValue,
                         cacheManager: cacheManager,
                         onSaveAttachment: { att in saveAttachment(att) },
                         isFocused: Binding(
