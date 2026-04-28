@@ -78,10 +78,11 @@ public actor CacheManager {
         var current = total
         for entry in sorted {
             guard current > limitBytes else { break }
-            let sizeOfEntry = (try? entry.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            let bodySize = (try? entry.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            let attachSize = await attachmentCache.sizeForMessageIDHash(entry.messageIDHash)
             try? FileManager.default.removeItem(at: entry.url)
             await attachmentCache.deleteByMessageIDHash(entry.messageIDHash)
-            current -= sizeOfEntry
+            current -= bodySize + attachSize
         }
     }
 }

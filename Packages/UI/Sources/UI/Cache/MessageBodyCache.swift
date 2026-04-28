@@ -17,7 +17,7 @@ public actor MessageBodyCache {
     public func read(messageID: String) async -> String? {
         let url = fileURL(for: messageID)
         guard let data = try? Data(contentsOf: url) else { return nil }
-        try? (url as NSURL).setResourceValue(Date(), forKey: .contentAccessDateKey)
+        try? (url as NSURL).setResourceValue(Date(), forKey: .contentModificationDateKey)
         return String(data: data, encoding: .utf8)
     }
 
@@ -47,12 +47,12 @@ public actor MessageBodyCache {
 
     func allFiles() -> [(url: URL, date: Date, messageIDHash: String)] {
         guard let items = try? FileManager.default.contentsOfDirectory(
-            at: bodiesDir, includingPropertiesForKeys: [.contentAccessDateKey]
+            at: bodiesDir, includingPropertiesForKeys: [.contentModificationDateKey]
         ) else { return [] }
         return items.compactMap { url in
             guard url.pathExtension == "html" else { return nil }
             let hash = url.deletingPathExtension().lastPathComponent
-            let date = (try? url.resourceValues(forKeys: [.contentAccessDateKey]))?.contentAccessDate ?? Date.distantPast
+            let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date.distantPast
             return (url, date, hash)
         }
     }

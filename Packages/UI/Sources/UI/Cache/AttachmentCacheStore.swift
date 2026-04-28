@@ -28,10 +28,10 @@ public actor AttachmentCacheStore {
               let metaData = try? Data(contentsOf: metaURL),
               let meta = try? JSONDecoder().decode(AttachmentMeta.self, from: metaData)
         else { return nil }
-        // Обновляем дату доступа у ОБОИХ файлов — allFiles() читает дату у .meta
+        // Обновляем modification date у обоих файлов — allFiles() сортирует по нему
         let now = Date()
-        try? (binURL as NSURL).setResourceValue(now, forKey: .contentAccessDateKey)
-        try? (metaURL as NSURL).setResourceValue(now, forKey: .contentAccessDateKey)
+        try? (binURL as NSURL).setResourceValue(now, forKey: .contentModificationDateKey)
+        try? (metaURL as NSURL).setResourceValue(now, forKey: .contentModificationDateKey)
         return (data, meta.mimeType)
     }
 
@@ -61,7 +61,7 @@ public actor AttachmentCacheStore {
     func allFiles() -> [(url: URL, date: Date, messageIDHash: String)] {
         guard let items = try? FileManager.default.contentsOfDirectory(
             at: attachDir,
-            includingPropertiesForKeys: [.contentAccessDateKey]
+            includingPropertiesForKeys: [.contentModificationDateKey]
         ) else { return [] }
         return items
             .filter { $0.pathExtension == "meta" }
@@ -69,9 +69,26 @@ public actor AttachmentCacheStore {
                 guard let metaData = try? Data(contentsOf: metaURL),
                       let meta = try? JSONDecoder().decode(AttachmentMeta.self, from: metaData)
                 else { return nil }
-                let date = (try? metaURL.resourceValues(forKeys: [.contentAccessDateKey]))?.contentAccessDate ?? .distantPast
+                let date = (try? metaURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
                 return (metaURL, date, meta.messageIDHash)
             }
+    }
+
+    func sizeForMessageIDHash(_ messageIDHash: String) -> Int {
+        guard let items = try? FileManager.default.contentsOfDirectory(
+            at: attachDir, includingPropertiesForKeys: [.fileSizeKey]
+        ) else { return 0 }
+        var total = 0
+        for url in items where url.pathExtension == "meta" {
+            guard let metaData = try? Data(contentsOf: url),
+                  let meta = try? JSONDecoder().decode(AttachmentMeta.self, from: metaData),
+                  meta.messageIDHash == messageIDHash
+            else { continue }
+            total += (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            let binURL = url.deletingPathExtension().appendingPathExtension("bin")
+            total += (try? binURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        }
+        return total
     }
 
     func deleteByMessageIDHash(_ messageIDHash: String) {

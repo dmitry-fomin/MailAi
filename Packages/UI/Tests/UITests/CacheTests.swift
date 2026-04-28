@@ -168,10 +168,13 @@ final class CacheManagerTests: XCTestCase {
     }
 
     func testEvictsOldestWhenOverLimit() async throws {
+        // limitBytes=500: один файл 300 байт помещается, два — нет.
+        // Записываем с интервалом 1.1 с, чтобы contentModificationDate точно различались
+        // даже на ФС с 1-секундным разрешением дат.
         let html1 = String(repeating: "a", count: 300)
         let html2 = String(repeating: "b", count: 300)
         await manager.writeBody(messageID: "msg-1", processedHTML: html1)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await Task.sleep(nanoseconds: 1_100_000_000)
         await manager.writeBody(messageID: "msg-2", processedHTML: html2)
         let r1 = await manager.readBody(messageID: "msg-1")
         XCTAssertNil(r1, "Oldest entry should be evicted")
