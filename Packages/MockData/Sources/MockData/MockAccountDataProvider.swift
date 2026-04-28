@@ -69,9 +69,12 @@ struct MockFixture: Sendable {
             displayName: "Mock User",
             kind: .imap,
             host: "localhost",
-            port: 0,
-            security: .none,
-            username: "mock"
+            port: 993,
+            security: .tls,
+            username: "mock",
+            smtpHost: "smtp.localhost",
+            smtpPort: 587,
+            smtpSecurity: .startTLS
         )
 
         let inbox = Mailbox(

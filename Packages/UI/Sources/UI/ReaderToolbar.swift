@@ -65,6 +65,9 @@ public struct ReaderToolbar: View {
         /// Действие «Snooze» с выбором времени. nil — кнопка скрыта.
         /// Принимает `Date` — время возврата письма.
         public var snooze: ((Date) -> Void)?
+        /// AI-предложение snooze: дата + краткое объяснение.
+        /// nil — секция «AI предлагает» не отображается.
+        public var aiSnoozeSuggestion: (date: Date, reason: String)?
         /// AI Magic Menu действия. nil — кнопка AI не показывается.
         public var ai: AIActions?
 
@@ -81,6 +84,7 @@ public struct ReaderToolbar: View {
             restore: (() -> Void)? = nil,
             print: (() -> Void)? = nil,
             snooze: ((Date) -> Void)? = nil,
+            aiSnoozeSuggestion: (date: Date, reason: String)? = nil,
             ai: AIActions? = nil
         ) {
             self.reply = reply
@@ -95,6 +99,7 @@ public struct ReaderToolbar: View {
             self.restore = restore
             self.print = print
             self.snooze = snooze
+            self.aiSnoozeSuggestion = aiSnoozeSuggestion
             self.ai = ai
         }
     }
@@ -108,7 +113,10 @@ public struct ReaderToolbar: View {
     public var body: some View {
         HStack(spacing: 4) {
             if let snoozeAction = actions.snooze {
-                SnoozeMenuButton(onSnooze: snoozeAction)
+                SnoozeMenuButton(
+                    onSnooze: snoozeAction,
+                    aiSuggestion: actions.aiSnoozeSuggestion
+                )
                 Divider().frame(height: 16).padding(.horizontal, 4)
             }
             if let unsubscribe = actions.unsubscribe {
@@ -194,15 +202,37 @@ public struct ReaderToolbar: View {
     }
 }
 
-// MARK: - Snooze Menu Button (MailAi-f7q)
+// MARK: - Snooze Menu Button (MailAi-f7q, MailAi-4gf)
 
 /// Кнопка «Snooze» с выпадающим меню предустановленных времён.
 /// Позволяет отложить письмо на 1 час, 3 часа, завтра утром, следующую неделю.
+/// Если передан `aiSuggestion` — показывает секцию «AI предлагает» поверх стандартных вариантов.
 private struct SnoozeMenuButton: View {
     let onSnooze: (Date) -> Void
+    /// AI-предложение: (дата, причина). nil — секция не отображается.
+    let aiSuggestion: (date: Date, reason: String)?
+
+    init(onSnooze: @escaping (Date) -> Void, aiSuggestion: (date: Date, reason: String)? = nil) {
+        self.onSnooze = onSnooze
+        self.aiSuggestion = aiSuggestion
+    }
 
     var body: some View {
         Menu {
+            // MARK: AI предлагает (MailAi-4gf)
+            if let suggestion = aiSuggestion {
+                Section("AI предлагает") {
+                    Button {
+                        onSnooze(suggestion.date)
+                    } label: {
+                        Label(suggestion.reason, systemImage: "sparkles")
+                    }
+                }
+
+                Divider()
+            }
+
+            // MARK: Стандартные варианты
             Button {
                 onSnooze(snoozeDate(hoursFromNow: 1))
             } label: {
@@ -229,8 +259,18 @@ private struct SnoozeMenuButton: View {
                 Label("Следующая неделя (пн 9:00)", systemImage: "calendar.badge.clock")
             }
         } label: {
-            Image(systemName: "moon.zzz")
-                .frame(width: 28, height: 24)
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: "moon.zzz")
+                    .frame(width: 28, height: 24)
+                // Индикатор — AI нашёл предложение.
+                if aiSuggestion != nil {
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 6, height: 6)
+                        .offset(x: 2, y: -2)
+                        .accessibilityHidden(true)
+                }
+            }
         }
         .menuStyle(.borderlessButton)
         .fixedSize()

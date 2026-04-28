@@ -2,6 +2,11 @@ import SwiftUI
 import Core
 
 /// Форма добавления IMAP-аккаунта. C4.
+///
+/// SMTP-секция появляется автоматически после ввода email:
+/// - Если `IMAPAutoconfig` нашёл настройки — поля заполняются автоматически.
+/// - Если нет — секция появляется пустой для ручного ввода.
+/// Кнопка «Проверить и сохранить» заблокирована, пока SMTP-поля не заполнены.
 public struct OnboardingScene: View {
     @ObservedObject var model: OnboardingViewModel
     public var onCancel: () -> Void
@@ -26,15 +31,27 @@ public struct OnboardingScene: View {
                 Section("Учётные данные") {
                     TextField("Email", text: $model.email)
                         .textContentType(.emailAddress)
-                    SecureField("Пароль", text: $model.password)
+                        .onSubmit {
+                            Task { await model.runAutoconfig() }
+                        }
+                    SecureField("Пароль (IMAP)", text: $model.password)
                     TextField("Имя для отображения (необязательно)", text: $model.displayName)
                     TextField("Username (если отличается от email)", text: $model.username)
                 }
 
-                Section("Сервер") {
-                    TextField("Host (imap.example.com)", text: $model.host)
+                Section("IMAP-сервер") {
+                    HStack {
+                        TextField("Host (imap.example.com)", text: $model.host)
+                        if model.isAutoconfiguring {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
                     TextField("Порт", text: $model.portText)
                     Toggle("Использовать TLS (SSL)", isOn: $model.useTLS)
+                }
+
+                if model.showSMTPSection {
+                    smtpSection
                 }
             }
             .formStyle(.grouped)
@@ -48,6 +65,13 @@ public struct OnboardingScene: View {
 
                 Spacer()
 
+                if !model.showSMTPSection && !model.isAutoconfiguring {
+                    Button("Определить настройки") {
+                        Task { await model.runAutoconfig() }
+                    }
+                    .buttonStyle(.bordered)
+                }
+
                 Button("Проверить и сохранить") {
                     Task { await model.submit() }
                 }
@@ -56,13 +80,41 @@ public struct OnboardingScene: View {
             }
         }
         .padding(24)
-        .frame(minWidth: 520, minHeight: 520)
+        .frame(minWidth: 520, minHeight: 560)
         .onChange(of: model.phase) { _, newValue in
             if case .succeeded(let account) = newValue {
                 onCompleted(account)
             }
         }
     }
+
+    // MARK: - SMTP Section
+
+    @ViewBuilder
+    private var smtpSection: some View {
+        Section("SMTP-сервер (исходящая почта)") {
+            TextField("Host (smtp.example.com)", text: $model.smtpHost)
+            TextField("Порт", text: $model.smtpPortText)
+            Toggle("Использовать SSL (порт 465)", isOn: $model.smtpUseTLS)
+                .onChange(of: model.smtpUseTLS) { _, useTLS in
+                    // Автоподстановка стандартного порта при переключении.
+                    if useTLS && model.smtpPortText == "587" {
+                        model.smtpPortText = "465"
+                    } else if !useTLS && model.smtpPortText == "465" {
+                        model.smtpPortText = "587"
+                    }
+                }
+
+            Toggle("Использовать пароль IMAP для SMTP", isOn: $model.smtpUseSamePassword)
+
+            if !model.smtpUseSamePassword {
+                SecureField("Пароль SMTP (Application Password)", text: $model.smtpPassword)
+                    .transition(.opacity)
+            }
+        }
+    }
+
+    // MARK: - Status View
 
     @ViewBuilder
     private var statusView: some View {

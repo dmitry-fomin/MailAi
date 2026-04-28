@@ -14,6 +14,10 @@ import MailTransport
 ///   что пользователь ввёл. Дополнительно делаем `SELECT INBOX` — это
 ///   «первый FETCH INBOX» из C4: подтверждаем, что на сервере есть INBOX,
 ///   и что аккаунт рабочий.
+/// - SMTP-поля автозаполняются через `IMAPAutoconfig` при вводе email.
+///   Если автоопределение не дало результата — пользователь вводит вручную.
+/// - Если `smtpUseSamePassword == true`, SMTP-пароль = IMAP-пароль (по умолчанию).
+///   Иначе — хранится отдельно в Keychain (`SecretsStore.setSMTPPassword`).
 @MainActor
 public final class OnboardingViewModel: ObservableObject {
 
@@ -24,7 +28,7 @@ public final class OnboardingViewModel: ObservableObject {
         case succeeded(Account)
     }
 
-    // MARK: - Form fields
+    // MARK: - Form fields: IMAP
 
     @Published public var email: String = ""
     @Published public var password: String = ""
@@ -34,22 +38,51 @@ public final class OnboardingViewModel: ObservableObject {
     @Published public var username: String = ""
     @Published public var displayName: String = ""
 
+    // MARK: - Form fields: SMTP
+
+    /// Отображать ли SMTP-секцию (true, когда автоопределение завершено или недоступно).
+    @Published public var showSMTPSection: Bool = false
+
+    @Published public var smtpHost: String = ""
+    @Published public var smtpPortText: String = "587"
+
+    /// Режим шифрования SMTP: true = SSL (порт 465), false = STARTTLS (порт 587).
+    @Published public var smtpUseTLS: Bool = false
+
+    /// Использовать тот же пароль для SMTP, что и для IMAP (по умолчанию).
+    @Published public var smtpUseSamePassword: Bool = true
+
+    /// Отдельный SMTP-пароль (используется только если `smtpUseSamePassword == false`).
+    @Published public var smtpPassword: String = ""
+
+    // MARK: - Autoconfig state
+
+    /// true — идёт автоопределение настроек.
+    @Published public private(set) var isAutoconfiguring: Bool = false
+
+    // MARK: - Phase
+
     @Published public private(set) var phase: Phase = .editing
+
+    // MARK: - Dependencies
 
     private let secretsStore: any SecretsStore
     private let registry: AccountRegistry
     private let imapConnect: @Sendable (IMAPEndpoint) async throws -> any IMAPLoginCapable
+    private let autoconfig: IMAPAutoconfig
 
     public init(
         secretsStore: any SecretsStore,
         registry: AccountRegistry,
-        imapConnect: (@Sendable (IMAPEndpoint) async throws -> any IMAPLoginCapable)? = nil
+        imapConnect: (@Sendable (IMAPEndpoint) async throws -> any IMAPLoginCapable)? = nil,
+        autoconfig: IMAPAutoconfig = IMAPAutoconfig()
     ) {
         self.secretsStore = secretsStore
         self.registry = registry
         self.imapConnect = imapConnect ?? { endpoint in
             try await RealIMAPLogin.make(endpoint: endpoint)
         }
+        self.autoconfig = autoconfig
     }
 
     // MARK: - Derived
@@ -62,6 +95,15 @@ public final class OnboardingViewModel: ObservableObject {
               let port = parsedPort, (1...65535).contains(Int(port)) else {
             return false
         }
+        if showSMTPSection {
+            guard !smtpHost.trimmingCharacters(in: .whitespaces).isEmpty,
+                  let smtpPort = parsedSMTPPort, (1...65535).contains(Int(smtpPort)) else {
+                return false
+            }
+            if !smtpUseSamePassword && smtpPassword.isEmpty {
+                return false
+            }
+        }
         return true
     }
 
@@ -69,9 +111,46 @@ public final class OnboardingViewModel: ObservableObject {
         UInt16(portText.trimmingCharacters(in: .whitespaces))
     }
 
+    public var parsedSMTPPort: UInt16? {
+        UInt16(smtpPortText.trimmingCharacters(in: .whitespaces))
+    }
+
     public var resolvedUsername: String {
         let u = username.trimmingCharacters(in: .whitespaces)
         return u.isEmpty ? email.trimmingCharacters(in: .whitespaces) : u
+    }
+
+    // MARK: - Autoconfig
+
+    /// Запускает автоопределение IMAP/SMTP настроек по домену email.
+    /// Вызывается из View при потере фокуса поля email.
+    public func runAutoconfig() async {
+        let trimmed = email.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+
+        isAutoconfiguring = true
+        defer { isAutoconfiguring = false }
+
+        do {
+            let result = try await autoconfig.discover(email: trimmed)
+            // Заполняем IMAP-поля только если пользователь ещё не ввёл их вручную.
+            if host.trimmingCharacters(in: .whitespaces).isEmpty {
+                host = result.imapHost
+                portText = String(result.imapPort)
+                useTLS = result.imapSecurity == .ssl
+            }
+            // SMTP-поля заполняем из результата.
+            smtpHost = result.smtpHost
+            smtpPortText = String(result.smtpPort)
+            smtpUseTLS = result.smtpSecurity == .ssl
+            showSMTPSection = true
+        } catch AutoconfigError.invalidEmail {
+            // Невалидный email — не показываем SMTP-секцию.
+            showSMTPSection = false
+        } catch {
+            // Не удалось определить — показываем секцию для ручного ввода.
+            showSMTPSection = true
+        }
     }
 
     // MARK: - Submit
@@ -84,6 +163,8 @@ public final class OnboardingViewModel: ObservableObject {
         let trimmedHost = host.trimmingCharacters(in: .whitespaces)
         let user = resolvedUsername
         let pwd = password  // локальная копия, чтобы затем очистить поле
+        let smtpPwd = smtpUseSamePassword ? pwd : smtpPassword
+
         let endpoint = IMAPEndpoint(
             host: trimmedHost,
             port: Int(port),
@@ -95,6 +176,23 @@ public final class OnboardingViewModel: ObservableObject {
         let encodedEmail = trimmedEmail.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? trimmedEmail
         let encodedHost = trimmedHost.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? trimmedHost
         let accountID = Account.ID(encodedEmail + "@" + encodedHost + ":" + String(port))
+
+        // Строим Account с SMTP-полями если они заданы.
+        let resolvedSMTPHost: String?
+        let resolvedSMTPPort: UInt16?
+        let resolvedSMTPSecurity: Account.Security?
+        if showSMTPSection,
+           !smtpHost.trimmingCharacters(in: .whitespaces).isEmpty,
+           let sp = parsedSMTPPort {
+            resolvedSMTPHost = smtpHost.trimmingCharacters(in: .whitespaces)
+            resolvedSMTPPort = sp
+            resolvedSMTPSecurity = smtpUseTLS ? .tls : .startTLS
+        } else {
+            resolvedSMTPHost = nil
+            resolvedSMTPPort = nil
+            resolvedSMTPSecurity = nil
+        }
+
         let account = Account(
             id: accountID,
             email: trimmedEmail,
@@ -103,7 +201,10 @@ public final class OnboardingViewModel: ObservableObject {
             host: trimmedHost,
             port: port,
             security: useTLS ? .tls : .none,
-            username: user
+            username: user,
+            smtpHost: resolvedSMTPHost,
+            smtpPort: resolvedSMTPPort,
+            smtpSecurity: resolvedSMTPSecurity
         )
 
         do {
@@ -115,8 +216,13 @@ public final class OnboardingViewModel: ObservableObject {
                 try await conn.logout()
             }
             try await secretsStore.setPassword(pwd, forAccount: accountID)
+            // Сохраняем SMTP-пароль только если он отличается от IMAP.
+            if !smtpUseSamePassword && !smtpPwd.isEmpty {
+                try await secretsStore.setSMTPPassword(smtpPwd, forAccount: accountID)
+            }
             registry.register(account)
-            password = ""  // не держим пароль в памяти после сохранения
+            password = ""       // не держим пароль в памяти после сохранения
+            smtpPassword = ""   // очищаем и SMTP-пароль
             phase = .succeeded(account)
         } catch {
             phase = .failed(Self.humanReadable(error))
