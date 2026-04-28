@@ -89,7 +89,12 @@ public final class OnboardingViewModel: ObservableObject {
             port: Int(port),
             security: useTLS ? .tls : .plain
         )
-        let accountID = Account.ID(trimmedEmail + "@" + trimmedHost + ":" + String(port))
+        // БАГ-11: используем percent-encoding чтобы избежать коллизий если email/host
+        // содержат '@' или ':'. Альтернатива — UUID, но тогда нельзя
+        // детерминированно восстановить ID при перезапуске по тем же данным.
+        let encodedEmail = trimmedEmail.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? trimmedEmail
+        let encodedHost = trimmedHost.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? trimmedHost
+        let accountID = Account.ID(encodedEmail + "@" + encodedHost + ":" + String(port))
         let account = Account(
             id: accountID,
             email: trimmedEmail,

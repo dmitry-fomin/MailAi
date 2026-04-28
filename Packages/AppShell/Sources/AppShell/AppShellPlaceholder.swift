@@ -52,17 +52,31 @@ public enum AccountDataProviderFactory {
     }
 
     private static func makeExchange(account: Account, secrets: (any SecretsStore)?) -> any AccountDataProvider {
-        // EWS URL сохраняется при онбординге в отдельный слот Keychain.
-        // Здесь строим URL синхронно из данных аккаунта как fallback.
-        // Реальный async-пробуждение произойдёт при первом обращении к provider.
+        // БАГ-3: EWS URL сохраняется при онбординге в отдельный слот Keychain
+        // (accountID + ":ewsURL"). Здесь строим fallback URL синхронно из данных
+        // аккаунта — он будет заменён правильным через makeExchangeAsync при старте.
+        // Вызвать secrets.password синхронно нельзя (async API), поэтому
+        // используем AccountRegistry.restoreExchangeProvider(for:) при запуске.
         let scheme = account.security == .none ? "http" : "https"
         let ewsURL = URL(string: "\(scheme)://\(account.host)/EWS/Exchange.asmx")!
         let client = EWSClient(ewsURL: ewsURL, username: account.username, password: "")
-        let provider = EWSAccountDataProvider(account: account, client: client)
-        // Пароль будет подставлен лениво при первом запросе через secrets.
-        // Для полноценного lazy-init нужен EWSAccountDataProvider.make(...) async,
-        // вызывается из AccountRegistry.session(for:) через Task — TODO в B-фазе EWS.
-        return provider
+        return EWSAccountDataProvider(account: account, client: client)
+    }
+
+    /// БАГ-3: Async-вариант для восстановления Exchange-провайдера при старте.
+    /// Читает сохранённый EWS URL и пароль из Keychain.
+    /// Вызывается из `AccountRegistry.restoreExchangeProvider(for:)`.
+    public static func makeExchangeAsync(
+        account: Account,
+        secrets: any SecretsStore
+    ) async throws -> any AccountDataProvider {
+        let ewsURLKey = Account.ID(account.id.rawValue + ":ewsURL")
+        let scheme = account.security == .none ? "http" : "https"
+        let fallbackURLString = "\(scheme)://\(account.host)/EWS/Exchange.asmx"
+        let storedURLString = try await secrets.password(forAccount: ewsURLKey)
+        let ewsURL = storedURLString.flatMap { URL(string: $0) }
+            ?? URL(string: fallbackURLString)!
+        return try await EWSAccountDataProvider.make(account: account, ewsURL: ewsURL, secrets: secrets)
     }
 
     /// Собирает `SendProvider` для аккаунта. Возвращает `nil`, если режим

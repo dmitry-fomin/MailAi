@@ -180,6 +180,10 @@ public actor ClassificationQueue {
 
         // Повторяем цикл, пока есть pending или ещё не все retry исчерпаны.
         while !pending.isEmpty {
+            // БАГ-7: проверяем отмену Task, чтобы не продолжать работу
+            // после закрытия окна.
+            guard !Task.isCancelled else { break }
+
             // 1. Берём батч из pending.
             let batch = popBatch(size)
             guard !batch.isEmpty else { break }
@@ -189,9 +193,11 @@ public actor ClassificationQueue {
             do {
                 results = try await worker(batch)
             } catch {
-                // Worker целиком упал (не per-ID) — retry весь батч.
+                // БАГ-4: Worker целиком упал (не per-ID) — retry весь батч.
+                // Используем .serverError (retryable), а не .permanent — иначе
+                // handleRetryable кладёт в failed без повторной попытки.
                 for id in batch {
-                    await handleRetryable(id: id, error: .permanent(message: String(describing: error)))
+                    handleRetryable(id: id, error: .serverError(statusCode: 0))
                 }
                 broadcast()
                 continue
@@ -204,7 +210,7 @@ public actor ClassificationQueue {
                 if let errorOpt = results[id], let error = errorOpt {
                     switch error {
                     case .rateLimited, .serverError:
-                        await handleRetryable(id: id, error: error)
+                        handleRetryable(id: id, error: error)
                     case .permanent:
                         failed.insert(id)
                         retryCounts.removeValue(forKey: id)

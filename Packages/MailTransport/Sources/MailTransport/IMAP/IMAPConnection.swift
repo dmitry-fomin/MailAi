@@ -13,13 +13,22 @@ public enum IMAPConnectionError: Error, Equatable, Sendable {
 /// `withOpen(...) { conn in ... }` — это соответствует
 /// `NIOAsyncChannel.executeThenClose` scoping.
 ///
-/// Не Sendable: один writer/один reader. Вызовы `execute`-методов
-/// подразумеваются серийными в рамках одной Task.
+/// **Concurrency invariant**: `IMAPConnection` — строго однопоточный объект.
+/// Все вызовы `execute`-методов, `_readNext()` и `_writeOutbound()` **обязаны**
+/// выполняться последовательно из одного Task (или actor). Конкурентные вызовы
+/// дадут data race на `iterator` — `NIOAsyncChannelInboundStream.AsyncIterator`
+/// не thread-safe по контракту NIO. `@unchecked Sendable` разрешён именно
+/// потому, что соблюдение инварианта — ответственность вызывающего (IMAPSession
+/// сериализует команды через AsyncStream).
 public final class IMAPConnection: @unchecked Sendable {
     public let tagGenerator = IMAPTagGenerator()
     public let greeting: IMAPUntaggedResponse
 
-    private var iterator: NIOAsyncChannelInboundStream<IMAPLine>.AsyncIterator
+    // nonisolated(unsafe): безопасно, т.к. доступ к iterator строго серийный
+    // — см. Concurrency invariant выше. Без этой аннотации Swift Strict
+    // Concurrency выдаёт ошибку на mutable stored property типа, не
+    // соответствующего Sendable.
+    nonisolated(unsafe) private var iterator: NIOAsyncChannelInboundStream<IMAPLine>.AsyncIterator
     private let outbound: NIOAsyncChannelOutboundWriter<IMAPLine>
 
     public typealias Channel = NIOAsyncChannel<IMAPLine, IMAPLine>

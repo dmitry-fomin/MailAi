@@ -138,6 +138,13 @@ public actor IMAPSession {
     /// готовности соединения.
     private var startContinuation: CheckedContinuation<Void, any Error>?
 
+    /// Команды, поставленные в очередь через enqueueCommand, но ещё не
+    /// начавшие обработку в background task. Хранятся здесь, чтобы
+    /// failAllPending мог резюмировать их CheckedContinuation с ошибкой.
+    /// Запись добавляется в enqueueCommand (перед yield), удаляется в
+    /// handleCommand (до начала выполнения).
+    private var pendingCommands: [SessionCommand] = []
+
     // MARK: - Init
 
     public init(
@@ -173,41 +180,43 @@ public actor IMAPSession {
         let username = self.username
         let password = self.password
 
-        self.backgroundTask = Task { [weak self] in
-            do {
-                try await IMAPConnection.withOpen(
-                    endpoint: endpoint,
-                    eventLoopGroup: eventLoopGroup
-                ) { conn in
-                    // Фаза аутентификации.
-                    await self?.setState(.authenticating)
-                    try await conn.login(username: username, password: password)
-                    await self?.setState(.ready)
-                    await self?.resumeStart(.success(()))
-
-                    // Command loop: читаем команды из stream пока он не завершится.
-                    for await command in stream {
-                        guard !Task.isCancelled else { return }
-                        await self?.handleCommand(command, connection: conn)
-                    }
-
-                    // Stream закрыт → отправляем LOGOUT.
-                    try? await conn.logout()
-                }
-            } catch is CancellationError {
-                await self?.setState(.disconnected(nil))
-                await self?.resumeStart(.failure(CancellationError()))
-            } catch {
-                await self?.setState(.disconnected(error))
-                await self?.resumeStart(.failure(error))
-                // Завершаем все pending continuation'ы с ошибкой.
-                await self?.failAllPending(with: error)
-            }
-        }
-
         // Ждём, пока background task достигнет .ready или упадёт с ошибкой.
+        // ВАЖНО: startContinuation устанавливается синхронно внутри замыкания,
+        // до запуска backgroundTask — это гарантирует отсутствие гонки, при
+        // которой resumeStart() мог бы сработать раньше установки continuation.
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, any Error>) in
             self.startContinuation = cont
+            self.backgroundTask = Task { [weak self] in
+                do {
+                    try await IMAPConnection.withOpen(
+                        endpoint: endpoint,
+                        eventLoopGroup: eventLoopGroup
+                    ) { conn in
+                        // Фаза аутентификации.
+                        await self?.setState(.authenticating)
+                        try await conn.login(username: username, password: password)
+                        await self?.setState(.ready)
+                        await self?.resumeStart(.success(()))
+
+                        // Command loop: читаем команды из stream пока он не завершится.
+                        for await command in stream {
+                            guard !Task.isCancelled else { return }
+                            await self?.handleCommand(command, connection: conn)
+                        }
+
+                        // Stream закрыт → отправляем LOGOUT.
+                        try? await conn.logout()
+                    }
+                } catch is CancellationError {
+                    await self?.setState(.disconnected(nil))
+                    await self?.resumeStart(.failure(CancellationError()))
+                } catch {
+                    await self?.setState(.disconnected(error))
+                    await self?.resumeStart(.failure(error))
+                    // Завершаем все pending continuation'ы с ошибкой.
+                    await self?.failAllPending(with: error)
+                }
+            }
         }
     }
 
@@ -375,11 +384,15 @@ public actor IMAPSession {
 
         return try await withCheckedThrowingContinuation { cont in
             let command = makeCommand(cont)
+            // Регистрируем в pending до yield, чтобы failAllPending мог
+            // резюмировать continuation с ошибкой при обрыве соединения.
+            pendingCommands.append(command)
             switch continuation.yield(command) {
             case .enqueued:
                 break
             case .dropped, .terminated:
-                // Stream уже закрыт — немедленно резюмируем с ошибкой.
+                // Stream уже закрыт — убираем из pending и резюмируем с ошибкой.
+                pendingCommands.removeLast()
                 cont.resume(throwing: IMAPSessionError.sessionClosed(
                     underlying: "command stream closed"
                 ))
@@ -404,10 +417,15 @@ public actor IMAPSession {
     }
 
     /// Обрабатывает одну команду на соединении.
-    private nonisolated func handleCommand(
+    private func handleCommand(
         _ command: SessionCommand,
         connection: IMAPConnection
     ) async {
+        // Команда взята из очереди и начала выполняться — убираем из pending,
+        // чтобы failAllPending не пытался её резюмировать повторно.
+        if !pendingCommands.isEmpty {
+            pendingCommands.removeFirst()
+        }
         switch command {
         case .mailboxes(let cont):
             await bridge(cont) { try await connection.list() }
@@ -461,5 +479,43 @@ public actor IMAPSession {
     private func failAllPending(with error: any Error) {
         commandContinuation?.finish()
         commandContinuation = nil
+        let snapshot = pendingCommands
+        pendingCommands.removeAll()
+        for command in snapshot {
+            Self.resumeCommand(command, throwing: error)
+        }
+    }
+
+    /// Резюмирует continuation внутри `SessionCommand` с ошибкой.
+    /// `nonisolated` + `static` — не требует actor hop для вызова.
+    private static func resumeCommand(_ command: SessionCommand, throwing error: any Error) {
+        switch command {
+        case .mailboxes(let cont):
+            cont.resume(throwing: error)
+        case .select(_, let cont):
+            cont.resume(throwing: error)
+        case .uidFetchHeaders(_, _, let cont):
+            cont.resume(throwing: error)
+        case .uidStore(_, _, _, let cont):
+            cont.resume(throwing: error)
+        case .expunge(let cont):
+            cont.resume(throwing: error)
+        case .uidMove(_, _, let cont):
+            cont.resume(throwing: error)
+        case .uidMoveFallback(_, _, let cont):
+            cont.resume(throwing: error)
+        case .capability(let cont):
+            cont.resume(throwing: error)
+        case .fetchBody(_, _, let cont):
+            cont.resume(throwing: error)
+        case .logout(let cont):
+            cont.resume(throwing: error)
+        case .append(_, let cont):
+            cont.resume(throwing: error)
+        case .createMailbox(_, let cont):
+            cont.resume(throwing: error)
+        case .search(_, _, let cont):
+            cont.resume(throwing: error)
+        }
     }
 }

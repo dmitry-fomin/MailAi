@@ -54,6 +54,9 @@ public final class AccountSessionModel: ObservableObject {
     private var searchTask: Task<Void, Never>?
     private var pathMonitor: NWPathMonitor?
     private var monitorTask: Task<Void, Never>?
+    /// БАГ-5: хранит последний Task восстановления соединения, чтобы отменять
+    /// предыдущий при быстром мигании сети (race condition).
+    private var networkRecoveryTask: Task<Void, Never>?
 
     public init(
         account: Account,
@@ -99,23 +102,29 @@ public final class AccountSessionModel: ObservableObject {
         isLoadingMessages = true
         messages = []
         let provider = self.provider
+        // БАГ-1: isLoadingMessages сбрасывается через withTaskCancellationHandler,
+        // чтобы вечный спиннер не оставался при отмене Task.
         let task = Task { [weak self] in
-            var accumulated: [Message] = []
-            do {
-                for try await page in provider.messages(in: mailboxID, page: .init(offset: 0, limit: pageLimit)) {
-                    accumulated.append(contentsOf: page)
-                    let snapshot = accumulated
-                    await MainActor.run { [weak self] in
-                        self?.messages = snapshot
+            await withTaskCancellationHandler {
+                var accumulated: [Message] = []
+                do {
+                    for try await page in provider.messages(in: mailboxID, page: .init(offset: 0, limit: pageLimit)) {
+                        accumulated.append(contentsOf: page)
+                        let snapshot = accumulated
+                        await MainActor.run { [weak self] in
+                            self?.messages = snapshot
+                        }
+                        if Task.isCancelled { break }
                     }
-                    if Task.isCancelled { return }
+                } catch let err as MailError {
+                    await MainActor.run { [weak self] in self?.lastError = err }
+                } catch {
+                    await MainActor.run { [weak self] in self?.lastError = .network(.unknown) }
                 }
-            } catch let err as MailError {
-                await MainActor.run { [weak self] in self?.lastError = err }
-            } catch {
-                await MainActor.run { [weak self] in self?.lastError = .network(.unknown) }
+                await MainActor.run { [weak self] in self?.isLoadingMessages = false }
+            } onCancel: { [weak self] in
+                Task { @MainActor [weak self] in self?.isLoadingMessages = false }
             }
-            await MainActor.run { [weak self] in self?.isLoadingMessages = false }
         }
         messagesTask = task
     }
@@ -152,6 +161,7 @@ public final class AccountSessionModel: ObservableObject {
         messagesTask?.cancel()
         bodyTask?.cancel()
         searchTask?.cancel()
+        networkRecoveryTask?.cancel()
         openBody = nil
         messages = []
         searchResults = []
@@ -268,12 +278,17 @@ public final class AccountSessionModel: ObservableObject {
     // MARK: - MailAi-791: Network Monitoring
 
     public func startNetworkMonitoring() {
+        // БАГ-2: останавливаем предыдущий монитор перед созданием нового.
+        pathMonitor?.cancel()
+        monitorTask?.cancel()
         let monitor = NWPathMonitor()
         pathMonitor = monitor
         monitorTask = Task { [weak self] in
             let stream = AsyncStream<NWPath> { continuation in
                 monitor.pathUpdateHandler = { continuation.yield($0) }
                 monitor.start(queue: DispatchQueue(label: "network.monitor"))
+                // БАГ-2: останавливаем NWPathMonitor при завершении стрима.
+                continuation.onTermination = { _ in monitor.cancel() }
             }
             for await path in stream {
                 await MainActor.run { [weak self] in
@@ -282,7 +297,10 @@ public final class AccountSessionModel: ObservableObject {
                     self.isOffline = path.status != .satisfied
                     if wasOffline && !self.isOffline {
                         if let id = self.selectedMailboxID {
-                            Task { await self.loadMessages(for: id) }
+                            // БАГ-5: отменяем предыдущий Task восстановления,
+                            // чтобы быстрое мигание сети не создавало конкурирующих Task.
+                            self.networkRecoveryTask?.cancel()
+                            self.networkRecoveryTask = Task { await self.loadMessages(for: id) }
                         }
                     }
                 }
@@ -293,8 +311,10 @@ public final class AccountSessionModel: ObservableObject {
     public func stopNetworkMonitoring() {
         pathMonitor?.cancel()
         monitorTask?.cancel()
+        networkRecoveryTask?.cancel()
         pathMonitor = nil
         monitorTask = nil
+        networkRecoveryTask = nil
     }
 
     private func updateFlags(messageID: Message.ID, mutate: (inout MessageFlags) -> Void) {

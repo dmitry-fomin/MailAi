@@ -118,6 +118,38 @@ public final class AccountRegistry: ObservableObject {
         return (store as? GRDBMetadataStore)?.pool
     }
 
+    // MARK: - БАГ-3: Восстановление Exchange-провайдера при старте
+
+    /// Читает сохранённый EWS URL и пароль для Exchange-аккаунта из Keychain,
+    /// создаёт провайдер с реальными credentials и заменяет fallback-сессию.
+    /// Вызывать при запуске приложения для всех аккаунтов `.exchange`-типа.
+    public func restoreExchangeProvider(for accountID: Account.ID) async {
+        guard let account = account(with: accountID),
+              account.kind == .exchange,
+              let secrets else { return }
+        do {
+            let provider = try await AccountDataProviderFactory.makeExchangeAsync(
+                account: account,
+                secrets: secrets
+            )
+            let store = persistentStore(for: account)
+            stores[accountID] = store
+            let search: (any SearchService)? = (store as? GRDBMetadataStore).map {
+                GRDBSearchService(pool: $0.pool)
+            }
+            let session = AccountSessionModel(
+                account: account,
+                provider: provider,
+                selectionPersistence: selectionPersistence,
+                searchService: search
+            )
+            sessions[accountID] = session
+            observeSessionChanges(session)
+        } catch {
+            // Не удалось восстановить — оставляем fallback-сессию.
+        }
+    }
+
     /// Сбрасывает сессию — вызывается при закрытии последнего окна аккаунта,
     /// чтобы инвариант «тело только в памяти пока открыто» не держал данные.
     public func releaseSession(for id: Account.ID) {
@@ -148,10 +180,15 @@ public final class AccountRegistry: ObservableObject {
     /// мэйлбоксах/письмах каскадно обновляли StatusBar.
     private func observeSessionChanges(_ session: AccountSessionModel) {
         let id = session.account.id
+        // БАГ-8: убираем двойной dispatch (.receive(on:) + DispatchQueue.main.async).
+        // Оставляем только .receive(on: RunLoop.main) и вызываем send()
+        // через MainActor.assumeIsolated для корректной strict concurrency.
         sessionCancellables[id] = session.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.objectWillChange.send()
+                MainActor.assumeIsolated {
+                    self?.objectWillChange.send()
+                }
             }
     }
 }

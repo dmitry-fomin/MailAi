@@ -10,7 +10,9 @@ import Secrets
 /// Полноценный `messages(in:page:)` со своим пулом соединений и авторизацией
 /// будет собран вместе с C4 (онбординг) — тогда провайдер начнёт сам
 /// открывать соединения по `Keychain`-секретам.
-public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProvider, @unchecked Sendable {
+/// Actor-изоляция гарантирует атомарность `ensureSession()`: при конкурентных
+/// вызовах только один создаёт IMAPSession, остальные получают уже готовый.
+public actor LiveAccountDataProvider: AccountDataProvider, MailActionsProvider {
     public let account: Account
     public let store: any MetadataStore
     public let secrets: (any SecretsStore)?
@@ -165,7 +167,7 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
     public func messages(in mailbox: Mailbox.ID, page: Page) -> AsyncThrowingStream<[Message], any Error> {
         let store = self.store
         return AsyncThrowingStream { continuation in
-            let task = Task {
+            let task = Task { [self] in
                 do {
                     // Шаг 1: мгновенно отдаём то, что уже в store — чтобы UI
                     // сразу показал список (офлайн-first).
@@ -212,7 +214,7 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
     public func body(for message: Message.ID) -> AsyncThrowingStream<ByteChunk, any Error> {
         let store = self.store
         return AsyncThrowingStream { continuation in
-            let task = Task {
+            let task = Task { [self] in
                 do {
                     guard let record = try await store.message(id: message) else {
                         throw MailError.messageNotFound(message)

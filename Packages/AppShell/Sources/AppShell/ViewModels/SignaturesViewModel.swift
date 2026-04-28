@@ -93,6 +93,11 @@ public final class SignaturesViewModel: ObservableObject {
             signatures = try await repository.all()
         } catch {
             print("[SignaturesViewModel] save error: \(error)")
+            // БАГ-9: синхронизируем UI с БД даже при ошибке, чтобы не показывать
+            // устаревшие данные (например, upsert прошёл, но setDefault упал).
+            if let all = try? await repository.all() {
+                signatures = all
+            }
         }
     }
 }

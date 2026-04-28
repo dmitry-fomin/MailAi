@@ -82,12 +82,40 @@ public struct IMAPIdleTuning: Sendable {
     public static let `default` = IMAPIdleTuning()
 }
 
+// MARK: - Once-resumable wrapper
+
+/// Обёртка над `CheckedContinuation<Void, Never>`, гарантирующая однократный
+/// `resume()`. Защищает от double-resume краша, когда несколько мест
+/// (background loop и `drainPendingAsCancelled`) могут одновременно попытаться
+/// завершить одно и то же ожидание.
+///
+/// Изолирована как `final class` (reference semantics) — несколько владельцев
+/// видят одно состояние `resumed`. Не `actor`, чтобы не вводить async hop при
+/// вызове `resume()` — флаг `nonisolated(unsafe)` защищён контрактом:
+/// `resume()` вызывается строго из actor-изолированных контекстов
+/// (`IdleCommandQueue` actor, `IMAPIdleController` actor), поэтому
+/// конкурентных обращений нет.
+private final class StopWaiter: @unchecked Sendable {
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    init(_ cont: CheckedContinuation<Void, Never>) {
+        self.continuation = cont
+    }
+
+    /// Резюмирует continuation ровно один раз; повторные вызовы — no-op.
+    func resumeOnce() {
+        guard let cont = continuation else { return }
+        continuation = nil
+        cont.resume()
+    }
+}
+
 // MARK: - Internal command queue
 
 /// Внутренняя команда для background loop.
 private enum IdleCommand: Sendable {
     case setMailbox(String, CheckedContinuation<Void, any Error>)
-    case stop(CheckedContinuation<Void, Never>)
+    case stop(StopWaiter)
 }
 
 /// Простая FIFO-очередь команд с «звоночком» — actor-обёртка над массивом и
@@ -126,8 +154,8 @@ private actor IdleCommandQueue {
             switch cmd {
             case .setMailbox(_, let cont):
                 cont.resume(throwing: IMAPIdleControllerError.stopped)
-            case .stop(let cont):
-                cont.resume()
+            case .stop(let waiter):
+                waiter.resumeOnce()
             }
             return
         }
@@ -178,8 +206,10 @@ private actor IdleCommandQueue {
             switch cmd {
             case .setMailbox(_, let cont):
                 cont.resume(throwing: IMAPIdleControllerError.stopped)
-            case .stop(let cont):
-                cont.resume()
+            case .stop(let waiter):
+                // resumeOnce() гарантирует однократный resume — безопасно даже
+                // если background loop уже обработал эту команду.
+                waiter.resumeOnce()
             }
         }
     }
@@ -273,40 +303,42 @@ public actor IMAPIdleController {
         let eventsContinuation = self.eventsContinuation
         let queue = self.queue
 
-        self.backgroundTask = Task { [weak self] in
-            do {
-                try await IMAPConnection.withOpen(
-                    endpoint: endpoint,
-                    eventLoopGroup: eventLoopGroup
-                ) { conn in
-                    try await conn.login(username: username, password: password)
-                    await self?.markActive(mailbox: nil)
-                    await self?.resumeStart(.success(()))
-
-                    await Self.runLoop(
-                        connection: conn,
-                        queue: queue,
-                        events: eventsContinuation,
-                        tuning: tuning,
-                        controller: self
-                    )
-
-                    try? await conn.logout()
-                }
-                await self?.markStopped(error: nil)
-            } catch is CancellationError {
-                await self?.markStopped(error: nil)
-                await self?.resumeStart(.failure(CancellationError()))
-            } catch {
-                await self?.markStopped(error: error)
-                await self?.resumeStart(.failure(error))
-            }
-            await queue.drainPendingAsCancelled()
-            eventsContinuation.finish()
-        }
-
+        // ВАЖНО: startContinuation устанавливается синхронно внутри замыкания,
+        // до запуска backgroundTask — это гарантирует отсутствие гонки, при
+        // которой resumeStart() мог бы сработать раньше установки continuation.
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, any Error>) in
             self.startContinuation = cont
+            self.backgroundTask = Task { [weak self] in
+                do {
+                    try await IMAPConnection.withOpen(
+                        endpoint: endpoint,
+                        eventLoopGroup: eventLoopGroup
+                    ) { conn in
+                        try await conn.login(username: username, password: password)
+                        await self?.markActive(mailbox: nil)
+                        await self?.resumeStart(.success(()))
+
+                        await Self.runLoop(
+                            connection: conn,
+                            queue: queue,
+                            events: eventsContinuation,
+                            tuning: tuning,
+                            controller: self
+                        )
+
+                        try? await conn.logout()
+                    }
+                    await self?.markStopped(error: nil)
+                } catch is CancellationError {
+                    await self?.markStopped(error: nil)
+                    await self?.resumeStart(.failure(CancellationError()))
+                } catch {
+                    await self?.markStopped(error: error)
+                    await self?.resumeStart(.failure(error))
+                }
+                await queue.drainPendingAsCancelled()
+                eventsContinuation.finish()
+            }
         }
     }
 
@@ -340,11 +372,12 @@ public actor IMAPIdleController {
             backgroundTask = nil
             return
         }
-        await withCheckedContinuation { (waiter: CheckedContinuation<Void, Never>) in
+        await withCheckedContinuation { (rawWaiter: CheckedContinuation<Void, Never>) in
+            let waiter = StopWaiter(rawWaiter)
             Task { [queue] in
                 let accepted = await queue.push(.stop(waiter))
                 if !accepted {
-                    waiter.resume()
+                    waiter.resumeOnce()
                 }
             }
         }
@@ -411,7 +444,7 @@ public actor IMAPIdleController {
                         break loop
                     }
                 case .stop(let waiter):
-                    waiter.resume()
+                    waiter.resumeOnce()
                     break loop
                 }
                 continue
@@ -466,7 +499,7 @@ public actor IMAPIdleController {
                 idleTask.cancel()
                 _ = try? await idleTask.value
                 events.yield(.idleStopped(mailbox: mailbox, reason: .shuttingDown))
-                waiter.resume()
+                waiter.resumeOnce()
                 break loop
 
             case .idleFinished(.success):
@@ -590,8 +623,11 @@ public actor IMAPIdleController {
             }
         }
         if let commandHit { return commandHit }
-        if let sawIdle { nonCommand = sawIdle }
+        // Ошибка IDLE важнее таймаута: нужно прервать цикл и сообщить об ошибке,
+        // а не делать бесполезный re-IDLE на разорванном соединении.
+        if case .idleFinished(.failure) = sawIdle { return sawIdle! }
         if sawTimeout { return .timeout }
+        if let sawIdle { return sawIdle }
         if sawCommandsClosed { return .commandsClosed }
         return nonCommand
     }

@@ -153,12 +153,19 @@ public struct IMAPValueTokenizer: Sendable {
         if let c = peek(), c == "\r" { _ = advance() }
         if let c = peek(), c == "\n" { _ = advance() }
         guard let length = Int(digits) else { throw IMAPParseError.invalidLiteral }
+        // IMAP RFC 3501: литерал '{N}' содержит ровно N ОКТЕТОВ (байтов).
+        // Итерируем по Unicode.Scalar, но считаем потреблённые байты UTF-8,
+        // чтобы правильно обрезать литерал на многобайтовых символах
+        // (кириллица = 2 байта/scalar, CJK = 3 байта/scalar).
         var collected = ""
-        var remaining = length
-        while remaining > 0, index < chars.count {
+        var byteCount = 0
+        while byteCount < length, index < chars.count {
             let ch = chars[index]
+            let chBytes = Int(ch.utf8.count)
+            // Не добавляем символ, если он выходит за пределы литерала.
+            guard byteCount + chBytes <= length else { break }
             collected.unicodeScalars.append(ch)
-            remaining -= Int(ch.utf8.count)
+            byteCount += chBytes
             index += 1
         }
         return .literal(collected)
