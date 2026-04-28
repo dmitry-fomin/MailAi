@@ -93,6 +93,9 @@ public struct MessageRowView: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
+        // MailAi-eyb1: VoiceOver hint и traits
+        .accessibilityHint("Нажмите для открытия письма")
+        .accessibilityAddTraits(.isButton)
         .contextMenu {
             if !moveTargets.isEmpty {
                 Menu("Переместить в…") {

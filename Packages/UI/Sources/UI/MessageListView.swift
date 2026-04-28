@@ -264,13 +264,27 @@ public struct MessageListView: View {
     /// Опциональное состояние multi-select. Если nil — режим выбора отключён.
     public var batchSelection: BatchSelectionState?
 
+    // MARK: - Swipe Actions (MailAi-swfi)
+
+    /// Callback для свайпа вправо (leading): архивировать письмо. nil — действие скрыто.
+    public var onSwipeArchive: ((Message.ID) -> Void)?
+
+    /// Callback для свайпа влево (trailing): удалить письмо. nil — действие скрыто.
+    public var onSwipeDelete: ((Message.ID) -> Void)?
+
+    /// Callback для свайпа влево (trailing): переключить прочитано/непрочитано. nil — действие скрыто.
+    public var onSwipeToggleRead: ((Message.ID) -> Void)?
+
     public init(
         viewModel: MessageListViewModel,
         selection: Binding<Message.ID?>,
         prefetchThreshold: Int = 10,
         moveTargets: [Mailbox] = [],
         onMove: ((Message.ID, Mailbox.ID) -> Void)? = nil,
-        batchSelection: BatchSelectionState? = nil
+        batchSelection: BatchSelectionState? = nil,
+        onSwipeArchive: ((Message.ID) -> Void)? = nil,
+        onSwipeDelete: ((Message.ID) -> Void)? = nil,
+        onSwipeToggleRead: ((Message.ID) -> Void)? = nil
     ) {
         self.viewModel = viewModel
         self._selection = selection
@@ -278,6 +292,9 @@ public struct MessageListView: View {
         self.moveTargets = moveTargets
         self.onMove = onMove
         self.batchSelection = batchSelection
+        self.onSwipeArchive = onSwipeArchive
+        self.onSwipeDelete = onSwipeDelete
+        self.onSwipeToggleRead = onSwipeToggleRead
     }
 
     public var body: some View {
@@ -341,6 +358,40 @@ public struct MessageListView: View {
                 moveTargets: moveTargets,
                 onMove: { targetID in onMove?(message.id, targetID) }
             )
+            // MARK: - Swipe Actions (MailAi-swfi)
+            // Leading (свайп вправо): архивировать — зелёный.
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                if let archive = onSwipeArchive {
+                    Button {
+                        archive(message.id)
+                    } label: {
+                        Label("Архив", systemImage: "archivebox")
+                    }
+                    .tint(.green)
+                }
+            }
+            // Trailing (свайп влево): удалить + переключить прочитано.
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                if let delete = onSwipeDelete {
+                    Button(role: .destructive) {
+                        delete(message.id)
+                    } label: {
+                        Label("Удалить", systemImage: "trash")
+                    }
+                }
+                if let toggleRead = onSwipeToggleRead {
+                    let isRead = message.flags.contains(.seen)
+                    Button {
+                        toggleRead(message.id)
+                    } label: {
+                        Label(
+                            isRead ? "Непрочитанное" : "Прочитанное",
+                            systemImage: isRead ? "envelope" : "envelope.open"
+                        )
+                    }
+                    .tint(.blue)
+                }
+            }
         }
     }
 

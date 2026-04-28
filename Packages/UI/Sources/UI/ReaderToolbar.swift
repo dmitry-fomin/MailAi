@@ -62,6 +62,9 @@ public struct ReaderToolbar: View {
         public var restore: (() -> Void)?
         /// Действие «Печать». nil — кнопка скрыта.
         public var print: (() -> Void)?
+        /// Действие «Snooze» с выбором времени. nil — кнопка скрыта.
+        /// Принимает `Date` — время возврата письма.
+        public var snooze: ((Date) -> Void)?
         /// AI Magic Menu действия. nil — кнопка AI не показывается.
         public var ai: AIActions?
 
@@ -77,6 +80,7 @@ public struct ReaderToolbar: View {
             translate: (() -> Void)? = nil,
             restore: (() -> Void)? = nil,
             print: (() -> Void)? = nil,
+            snooze: ((Date) -> Void)? = nil,
             ai: AIActions? = nil
         ) {
             self.reply = reply
@@ -90,6 +94,7 @@ public struct ReaderToolbar: View {
             self.translate = translate
             self.restore = restore
             self.print = print
+            self.snooze = snooze
             self.ai = ai
         }
     }
@@ -102,6 +107,10 @@ public struct ReaderToolbar: View {
 
     public var body: some View {
         HStack(spacing: 4) {
+            if let snoozeAction = actions.snooze {
+                SnoozeMenuButton(onSnooze: snoozeAction)
+                Divider().frame(height: 16).padding(.horizontal, 4)
+            }
             if let unsubscribe = actions.unsubscribe {
                 toolButton("hand.raised.slash", "Отписаться", action: unsubscribe)
                 Divider().frame(height: 16).padding(.horizontal, 4)
@@ -157,10 +166,12 @@ public struct ReaderToolbar: View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .frame(width: 28, height: 24)
+                .accessibilityHidden(true) // Иконка скрыта — label на кнопке
         }
         .buttonStyle(.borderless)
         .help(label)
         .accessibilityLabel(label)
+        .accessibilityAddTraits(.isButton)
     }
 
     @ViewBuilder
@@ -173,11 +184,86 @@ public struct ReaderToolbar: View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .frame(width: 28, height: 24)
+                .accessibilityHidden(true)
         }
         .buttonStyle(.borderless)
         .help(label)
         .accessibilityLabel(label)
+        .accessibilityAddTraits(.isButton)
         .keyboardShortcut(KeyEquivalent(key), modifiers: .command)
+    }
+}
+
+// MARK: - Snooze Menu Button (MailAi-f7q)
+
+/// Кнопка «Snooze» с выпадающим меню предустановленных времён.
+/// Позволяет отложить письмо на 1 час, 3 часа, завтра утром, следующую неделю.
+private struct SnoozeMenuButton: View {
+    let onSnooze: (Date) -> Void
+
+    var body: some View {
+        Menu {
+            Button {
+                onSnooze(snoozeDate(hoursFromNow: 1))
+            } label: {
+                Label("Через 1 час", systemImage: "clock")
+            }
+
+            Button {
+                onSnooze(snoozeDate(hoursFromNow: 3))
+            } label: {
+                Label("Через 3 часа", systemImage: "clock.badge.2")
+            }
+
+            Divider()
+
+            Button {
+                onSnooze(tomorrowMorning())
+            } label: {
+                Label("Завтра утром (9:00)", systemImage: "sunrise")
+            }
+
+            Button {
+                onSnooze(nextMonday())
+            } label: {
+                Label("Следующая неделя (пн 9:00)", systemImage: "calendar.badge.clock")
+            }
+        } label: {
+            Image(systemName: "moon.zzz")
+                .frame(width: 28, height: 24)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Отложить письмо (Snooze)")
+        .accessibilityLabel("Отложить письмо")
+    }
+
+    private func snoozeDate(hoursFromNow hours: Int) -> Date {
+        Calendar.current.date(byAdding: .hour, value: hours, to: Date()) ?? Date()
+    }
+
+    private func tomorrowMorning() -> Date {
+        var components = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        components.day = (components.day ?? 0) + 1
+        components.hour = 9
+        components.minute = 0
+        components.second = 0
+        return Calendar.current.date(from: components) ?? Date()
+    }
+
+    private func nextMonday() -> Date {
+        let cal = Calendar.current
+        let now = Date()
+        let weekday = cal.component(.weekday, from: now)
+        // weekday: 1=Sun, 2=Mon, ..., 7=Sat
+        let daysToMonday = weekday == 2 ? 7 : (2 - weekday + 7) % 7
+        let daysToAdd = daysToMonday == 0 ? 7 : daysToMonday
+        var components = cal.dateComponents([.year, .month, .day], from: now)
+        components.day = (components.day ?? 0) + daysToAdd
+        components.hour = 9
+        components.minute = 0
+        components.second = 0
+        return cal.date(from: components) ?? Date()
     }
 }
 

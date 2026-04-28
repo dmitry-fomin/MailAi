@@ -21,6 +21,7 @@ public struct ReaderHeaderView: View {
         Button(action: { withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() } }) {
             HStack(alignment: .top, spacing: 12) {
                 avatar
+                    .accessibilityHidden(true) // Аватар-заглушка не несёт информации
 
                 VStack(alignment: .leading, spacing: 4) {
                     // Subject — всегда виден
@@ -47,6 +48,7 @@ public struct ReaderHeaderView: View {
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
                 }
             }
             .padding(.horizontal, 16)
@@ -54,6 +56,11 @@ public struct ReaderHeaderView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // MailAi-eyb1: VoiceOver accessibility для заголовка письма
+        .accessibilityLabel(headerAccessibilityLabel)
+        .accessibilityHint(isExpanded ? "Нажмите, чтобы свернуть детали" : "Нажмите, чтобы развернуть детали")
+        .accessibilityValue(isExpanded ? "Развёрнут" : "Свёрнут")
+        .accessibilityAddTraits(.isButton)
     }
 
     // MARK: - Collapsed state
@@ -150,6 +157,19 @@ public struct ReaderHeaderView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(width: 40, height: 40)
+    }
+
+    /// Полная accessibility метка для кнопки-заголовка письма.
+    private var headerAccessibilityLabel: String {
+        var parts: [String] = []
+        let subject = message.subject.isEmpty ? "Без темы" : message.subject
+        parts.append("Тема: \(subject)")
+        parts.append("От: \(fullFromLabel)")
+        if !message.to.isEmpty {
+            parts.append("Кому: \(recipients(message.to))")
+        }
+        parts.append("Дата: \(longDate)")
+        return parts.joined(separator: ". ")
     }
 
     private var initials: String {

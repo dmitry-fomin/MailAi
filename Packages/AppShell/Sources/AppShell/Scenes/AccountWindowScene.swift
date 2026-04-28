@@ -670,6 +670,18 @@ public struct AccountWindowScene: View {
                 showTranslation = false
                 isTranslating = false
             }
+            // MailAi-k90l: Spotlight / Handoff — регистрируем NSUserActivity
+            // при открытии письма, чтобы оно появлялось в Spotlight.
+            .userActivity("com.mailai.message", isActive: true) { activity in
+                activity.title = message.subject.isEmpty ? "(Без темы)" : message.subject
+                activity.userInfo = [
+                    "messageID": message.id,
+                    "accountID": session.account.id
+                ]
+                activity.isEligibleForSearch = true
+                activity.isEligibleForHandoff = false
+                activity.isEligibleForPublicIndexing = false
+            }
         } else if session.openBody == nil && session.isOffline && session.selectedMessageID != nil {
             ContentUnavailableView(
                 "Тело письма недоступно офлайн",

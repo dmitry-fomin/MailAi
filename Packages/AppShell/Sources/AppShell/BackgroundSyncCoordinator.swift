@@ -40,6 +40,22 @@ public protocol SyncCoordinatorDelegate: AnyObject, Sendable {
     func syncDidRequestRefresh(for accountID: Account.ID) async
 }
 
+// MARK: - SnoozeCheckDelegate
+
+/// Делегат для проверки просроченных snooze-писем.
+///
+/// MailAi-f7q: вызывается `BackgroundSyncCoordinator` при каждом polling-цикле.
+/// Реализуется на стороне, имеющей доступ к `SnoozeScheduler` и IMAP-провайдеру.
+public protocol SnoozeCheckDelegate: AnyObject, Sendable {
+    /// Вызывается при каждом polling-тике.
+    /// Реализация должна:
+    /// 1. Запросить просроченные snooze из `SnoozeScheduler.dueMessages()`
+    /// 2. Переместить письма в оригинальный mailbox через IMAP COPY/MOVE
+    /// 3. Удалить записи через `SnoozeScheduler.markDone()`
+    /// 4. Отправить уведомление через `NotificationManager`
+    func checkSnoozedMessages(for accountID: Account.ID) async
+}
+
 // MARK: - BackgroundSyncCoordinator
 
 /// Актор, управляющий фоновой синхронизацией одного аккаунта.
@@ -89,6 +105,8 @@ public actor BackgroundSyncCoordinator {
     private let accountID: Account.ID
     private let configuration: Configuration
     private weak var delegate: (any SyncCoordinatorDelegate)?
+    /// MailAi-f7q: делегат для проверки просроченных snooze.
+    private weak var snoozeDelegate: (any SnoozeCheckDelegate)?
 
     private let _progress: AsyncStream<SyncProgress>
     private let progressContinuation: AsyncStream<SyncProgress>.Continuation
@@ -101,11 +119,13 @@ public actor BackgroundSyncCoordinator {
     public init(
         accountID: Account.ID,
         configuration: Configuration = .default,
-        delegate: any SyncCoordinatorDelegate
+        delegate: any SyncCoordinatorDelegate,
+        snoozeDelegate: (any SnoozeCheckDelegate)? = nil
     ) {
         self.accountID = accountID
         self.configuration = configuration
         self.delegate = delegate
+        self.snoozeDelegate = snoozeDelegate
 
         let (stream, cont) = AsyncStream<SyncProgress>.makeStream(
             bufferingPolicy: .bufferingNewest(64)
@@ -211,6 +231,12 @@ public actor BackgroundSyncCoordinator {
                 return
             }
             await delegate.syncDidRequestRefresh(for: accountID)
+
+            // MailAi-f7q: проверяем просроченные snooze при каждом polling-цикле.
+            if let snoozeDelegate {
+                await snoozeDelegate.checkSnoozedMessages(for: accountID)
+            }
+
             publishProgress(.completed(at: Date()), nextSyncIn: configuration.pollingInterval)
             // После завершения — публикуем idle с таймером до следующего тика.
             publishProgress(.idle, nextSyncIn: configuration.pollingInterval)

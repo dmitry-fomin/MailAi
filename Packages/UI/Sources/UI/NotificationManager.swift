@@ -21,6 +21,8 @@ public enum MailNotificationAction {
 final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
 
     var onMarkAsRead: ((String) -> Void)?
+    /// Вызывается при тапе на уведомление (action .defaultAction или кастомный tapped-баннер).
+    var onOpenMessage: ((String) -> Void)?
 
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
@@ -33,10 +35,24 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate, @u
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        guard response.actionIdentifier == MailNotificationAction.markAsRead else { return }
         let userInfo = response.notification.request.content.userInfo
-        guard let messageID = userInfo["messageID"] as? String else { return }
-        onMarkAsRead?(messageID)
+        let messageID = userInfo["messageID"] as? String
+
+        switch response.actionIdentifier {
+        case MailNotificationAction.markAsRead:
+            if let messageID {
+                onMarkAsRead?(messageID)
+            }
+
+        case UNNotificationDefaultActionIdentifier:
+            // Пользователь тапнул по баннеру — открыть письмо.
+            if let messageID {
+                onOpenMessage?(messageID)
+            }
+
+        default:
+            break
+        }
     }
 }
 
@@ -75,10 +91,17 @@ public final class NotificationManager: @unchecked Sendable {
     ///
     /// Вызвать один раз при запуске приложения (из `AppDelegate` или `.task`).
     ///
-    /// - Parameter onMarkAsRead: Вызывается с `messageID`, когда пользователь
-    ///   нажимает action «Отметить прочитанным» в баннере уведомления.
-    public func setupDelegate(onMarkAsRead: ((String) -> Void)? = nil) {
+    /// - Parameters:
+    ///   - onMarkAsRead: Вызывается с `messageID`, когда пользователь нажимает
+    ///     action «Отметить прочитанным» в баннере уведомления.
+    ///   - onOpenMessage: Вызывается с `messageID`, когда пользователь тапает
+    ///     по баннеру (тап без выбора action — открыть письмо).
+    public func setupDelegate(
+        onMarkAsRead: ((String) -> Void)? = nil,
+        onOpenMessage: ((String) -> Void)? = nil
+    ) {
         notificationDelegate.onMarkAsRead = onMarkAsRead
+        notificationDelegate.onOpenMessage = onOpenMessage
         let center = UNUserNotificationCenter.current()
         center.delegate = notificationDelegate
 

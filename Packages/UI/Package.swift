@@ -20,7 +20,8 @@ let package = Package(
                 .enableUpcomingFeature("ExistentialAny")
             ],
             linkerSettings: [
-                .linkedFramework("QuickLookUI")
+                .linkedFramework("QuickLookUI"),
+                .linkedFramework("CoreSpotlight")
             ]
         ),
         .testTarget(
