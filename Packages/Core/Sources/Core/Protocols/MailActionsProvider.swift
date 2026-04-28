@@ -12,4 +12,8 @@ public protocol MailActionsProvider: Sendable {
     func setRead(_ read: Bool, messageID: Message.ID) async throws
     func setFlagged(_ flagged: Bool, messageID: Message.ID) async throws
     func moveToMailbox(messageID: Message.ID, targetMailboxID: Mailbox.ID) async throws
+
+    /// Восстанавливает письма из Trash в указанную папку (по умолчанию — Inbox).
+    /// MailAi-9fi0: Trash restore.
+    func restore(messageIDs: [Message.ID], to targetMailboxID: Mailbox.ID) async throws
 }

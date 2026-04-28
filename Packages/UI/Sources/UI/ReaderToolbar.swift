@@ -16,6 +16,9 @@ public struct ReaderToolbar: View {
         public var unsubscribe: (() -> Void)?
         /// Действие «Перевести». nil — кнопка скрыта.
         public var translate: (() -> Void)?
+        /// Действие «Восстановить из Trash». nil — кнопка скрыта.
+        /// MailAi-9fi0: показывается только когда письмо находится в Trash.
+        public var restore: (() -> Void)?
 
         public init(
             reply: @escaping () -> Void = {},
@@ -26,7 +29,8 @@ public struct ReaderToolbar: View {
             flag: @escaping () -> Void = {},
             toggleRead: @escaping () -> Void = {},
             unsubscribe: (() -> Void)? = nil,
-            translate: (() -> Void)? = nil
+            translate: (() -> Void)? = nil,
+            restore: (() -> Void)? = nil
         ) {
             self.reply = reply
             self.replyAll = replyAll
@@ -37,6 +41,7 @@ public struct ReaderToolbar: View {
             self.toggleRead = toggleRead
             self.unsubscribe = unsubscribe
             self.translate = translate
+            self.restore = restore
         }
     }
 
@@ -60,6 +65,10 @@ public struct ReaderToolbar: View {
             toolButton("arrowshape.turn.up.left.2", "Ответить всем", action: actions.replyAll)
             toolButton("arrowshape.turn.up.right", "Переслать", action: actions.forward)
             Divider().frame(height: 16).padding(.horizontal, 4)
+            if let restore = actions.restore {
+                toolButton("arrow.uturn.backward", "Восстановить", action: restore)
+                Divider().frame(height: 16).padding(.horizontal, 4)
+            }
             toolButton("archivebox", "Архив", action: actions.archive)
             toolButton("trash", "Удалить", action: actions.delete)
             toolButton("flag", "Флаг", action: actions.flag)

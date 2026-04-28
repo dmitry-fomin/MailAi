@@ -91,10 +91,153 @@ public final class MessageListViewModel: ObservableObject {
     }
 }
 
+// MARK: - BatchSelectionState
+
+/// Состояние multi-select режима для `MessageListView`.
+///
+/// Хранит набор выбранных ID. Используется как `@StateObject` / `@ObservedObject`
+/// в родительском view — передаётся в список и batch toolbar.
+@MainActor
+public final class BatchSelectionState: ObservableObject {
+    @Published public private(set) var selectedIDs: Set<Message.ID> = []
+    @Published public private(set) var isActive: Bool = false
+
+    public init() {}
+
+    /// Активирует режим multi-select.
+    public func activate() { isActive = true }
+
+    /// Деактивирует режим multi-select и снимает весь выбор.
+    public func deactivate() { isActive = false; selectedIDs = [] }
+
+    /// Добавляет / убирает письмо из выбора.
+    public func toggle(_ id: Message.ID) {
+        if selectedIDs.contains(id) {
+            selectedIDs.remove(id)
+        } else {
+            selectedIDs.insert(id)
+        }
+    }
+
+    /// Выбирает все переданные письма.
+    public func selectAll(_ messages: [Message]) {
+        selectedIDs = Set(messages.map(\.id))
+    }
+
+    /// Снимает весь выбор (не деактивирует режим).
+    public func clear() { selectedIDs = [] }
+
+    public var selectionCount: Int { selectedIDs.count }
+    public var hasSelection: Bool { !selectedIDs.isEmpty }
+}
+
+// MARK: - BatchToolbar
+
+/// Toolbar с batch-кнопками, появляется при активном multi-select режиме.
+///
+/// Кнопки: прочитано, непрочитано, флаг, удалить, архивировать, переместить,
+/// снять выбор.
+public struct BatchToolbar: View {
+    @ObservedObject public var state: BatchSelectionState
+    public var mailboxes: [Mailbox]
+    public var onMarkRead: () -> Void
+    public var onMarkUnread: () -> Void
+    public var onFlag: () -> Void
+    public var onDelete: () -> Void
+    public var onArchive: () -> Void
+    public var onMove: ((Mailbox.ID) -> Void)?
+
+    public init(
+        state: BatchSelectionState,
+        mailboxes: [Mailbox] = [],
+        onMarkRead: @escaping () -> Void = {},
+        onMarkUnread: @escaping () -> Void = {},
+        onFlag: @escaping () -> Void = {},
+        onDelete: @escaping () -> Void = {},
+        onArchive: @escaping () -> Void = {},
+        onMove: ((Mailbox.ID) -> Void)? = nil
+    ) {
+        self.state = state
+        self.mailboxes = mailboxes
+        self.onMarkRead = onMarkRead
+        self.onMarkUnread = onMarkUnread
+        self.onFlag = onFlag
+        self.onDelete = onDelete
+        self.onArchive = onArchive
+        self.onMove = onMove
+    }
+
+    public var body: some View {
+        HStack(spacing: 4) {
+            Text("\(state.selectionCount) выбрано")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.leading, 4)
+
+            Spacer()
+
+            batchButton("envelope.open", "Прочитано", action: onMarkRead)
+            batchButton("envelope", "Непрочитано", action: onMarkUnread)
+            batchButton("flag", "Флаг", action: onFlag)
+
+            Divider().frame(height: 16).padding(.horizontal, 2)
+
+            batchButton("archivebox", "Архивировать", action: onArchive)
+
+            if let onMove, !mailboxes.isEmpty {
+                Menu {
+                    ForEach(mailboxes) { mailbox in
+                        Button(mailbox.name) { onMove(mailbox.id) }
+                    }
+                } label: {
+                    Image(systemName: "folder")
+                        .frame(width: 28, height: 24)
+                }
+                .menuStyle(.borderlessButton)
+                .help("Переместить в…")
+                .frame(width: 28)
+            }
+
+            batchButton("trash", "Удалить", action: onDelete)
+                .foregroundStyle(.red)
+
+            Divider().frame(height: 16).padding(.horizontal, 2)
+
+            Button {
+                state.deactivate()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .frame(width: 28, height: 24)
+            }
+            .buttonStyle(.borderless)
+            .help("Снять выбор")
+            .accessibilityLabel("Снять выбор")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+    }
+
+    @ViewBuilder
+    private func batchButton(_ systemImage: String, _ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .frame(width: 28, height: 24)
+        }
+        .buttonStyle(.borderless)
+        .help(label)
+        .accessibilityLabel(label)
+        .disabled(!state.hasSelection)
+    }
+}
+
 // MARK: - MessageListView
 
 /// Список писем с виртуализацией через `List` и пагинацией (load-more
-/// при скролле к концу).
+/// при скролле к концу). Поддерживает multi-select через `BatchSelectionState`.
 ///
 /// Каждая строка реализована через `MessageRowView`:
 /// отправитель, тема, превью, дата, unread indicator.
@@ -118,33 +261,34 @@ public struct MessageListView: View {
     /// Callback при перемещении письма в другую папку.
     public var onMove: ((Message.ID, Mailbox.ID) -> Void)?
 
+    /// Опциональное состояние multi-select. Если nil — режим выбора отключён.
+    public var batchSelection: BatchSelectionState?
+
     public init(
         viewModel: MessageListViewModel,
         selection: Binding<Message.ID?>,
         prefetchThreshold: Int = 10,
         moveTargets: [Mailbox] = [],
-        onMove: ((Message.ID, Mailbox.ID) -> Void)? = nil
+        onMove: ((Message.ID, Mailbox.ID) -> Void)? = nil,
+        batchSelection: BatchSelectionState? = nil
     ) {
         self.viewModel = viewModel
         self._selection = selection
         self.prefetchThreshold = prefetchThreshold
         self.moveTargets = moveTargets
         self.onMove = onMove
+        self.batchSelection = batchSelection
     }
 
     public var body: some View {
         List(selection: $selection) {
             ForEach(viewModel.messages) { message in
-                MessageRowView(
-                    message: message,
-                    moveTargets: moveTargets,
-                    onMove: { targetID in onMove?(message.id, targetID) }
-                )
-                .tag(message.id as Message.ID?)
-                .id(message.id)
-                .onAppear {
-                    triggerPrefetchIfNeeded(for: message)
-                }
+                messageRow(message)
+                    .tag(message.id as Message.ID?)
+                    .id(message.id)
+                    .onAppear {
+                        triggerPrefetchIfNeeded(for: message)
+                    }
             }
 
             // Индикатор загрузки в конце списка.
@@ -165,6 +309,38 @@ public struct MessageListView: View {
             if viewModel.messages.isEmpty && viewModel.hasMore && !viewModel.isLoadingMore {
                 viewModel.loadMoreIfNeeded()
             }
+        }
+    }
+
+    @ViewBuilder
+    private func messageRow(_ message: Message) -> some View {
+        if let batch = batchSelection, batch.isActive {
+            // Multi-select режим: показываем чекбокс + строку письма.
+            HStack(spacing: 6) {
+                Image(systemName: batch.selectedIDs.contains(message.id)
+                    ? "checkmark.circle.fill"
+                    : "circle")
+                    .foregroundStyle(batch.selectedIDs.contains(message.id)
+                        ? Color.accentColor : Color.secondary)
+                    .font(.title3)
+                    .onTapGesture { batch.toggle(message.id) }
+                    .accessibilityLabel(batch.selectedIDs.contains(message.id)
+                        ? "Снять выбор" : "Выбрать")
+
+                MessageRowView(
+                    message: message,
+                    moveTargets: moveTargets,
+                    onMove: { targetID in onMove?(message.id, targetID) }
+                )
+                .contentShape(Rectangle())
+                .onTapGesture { batch.toggle(message.id) }
+            }
+        } else {
+            MessageRowView(
+                message: message,
+                moveTargets: moveTargets,
+                onMove: { targetID in onMove?(message.id, targetID) }
+            )
         }
     }
 

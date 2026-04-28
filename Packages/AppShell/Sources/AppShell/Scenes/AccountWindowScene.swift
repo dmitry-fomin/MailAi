@@ -2,6 +2,7 @@ import SwiftUI
 import Core
 import UI
 import AI
+import Storage
 
 public struct AccountWindowScene: View {
     @ObservedObject var session: AccountSessionModel
@@ -75,9 +76,17 @@ public struct AccountWindowScene: View {
         let mode: RuleProposalSheet.Mode
     }
 
-    public init(session: AccountSessionModel, translator: (any AITranslator)? = nil) {
+    /// MailAi-8uz8: репозиторий подписей для автовставки при создании письма.
+    private let signaturesRepository: SignaturesRepository?
+
+    public init(
+        session: AccountSessionModel,
+        translator: (any AITranslator)? = nil,
+        signaturesRepository: SignaturesRepository? = nil
+    ) {
         self.session = session
         self.translator = translator
+        self.signaturesRepository = signaturesRepository
         _sidebar = StateObject(wrappedValue: SidebarViewModel(account: session.account))
         _classificationProgress = StateObject(wrappedValue: ClassificationProgressViewModel())
     }
@@ -119,12 +128,7 @@ public struct AccountWindowScene: View {
                 onDelete: { showDeleteConfirmation = true },
                 onNextUnread: { selectNextUnread() },
                 onCompose: {
-                    composeRequest = ComposeRequest(model: ComposeViewModel(
-                        accountEmail: session.account.email,
-                        accountDisplayName: session.account.displayName,
-                        sendProvider: session.provider as? any SendProvider,
-                        draftSaver: nil
-                    ))
+                    Task { await openCompose() }
                 },
                 onFocusSearch: { focus = .list }
             )
@@ -814,6 +818,28 @@ public struct AccountWindowScene: View {
         .opacity(0)
         .frame(width: 0, height: 0)
         .accessibilityHidden(true)
+    }
+
+    // MARK: - MailAi-8uz8: Compose with default signature
+
+    /// Открывает окно создания письма, автоматически вставляя подпись по умолчанию.
+    /// Подпись загружается асинхронно из `SignaturesRepository` для текущего аккаунта.
+    @MainActor
+    private func openCompose() async {
+        let defaultSigBody: String?
+        if let repo = signaturesRepository {
+            let sig = try? await repo.defaultSignature(for: session.account.id)
+            defaultSigBody = sig?.body
+        } else {
+            defaultSigBody = nil
+        }
+        composeRequest = ComposeRequest(model: ComposeViewModel(
+            accountEmail: session.account.email,
+            accountDisplayName: session.account.displayName,
+            sendProvider: session.provider as? any SendProvider,
+            draftSaver: nil,
+            defaultSignatureBody: defaultSigBody
+        ))
     }
 
     // MARK: - MailAi-6xac: Mailbox folder management

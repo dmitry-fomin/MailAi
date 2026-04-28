@@ -141,6 +141,18 @@ public final class ComposeViewModel: ObservableObject {
     private let sendProvider: (any SendProvider)?
     private let draftSaver: DraftSaver?
 
+    // MARK: - MailAi-r862: Autosave
+
+    /// Задержка автосохранения черновика — 3 секунды после последнего изменения.
+    private static let autosaveDebounce: UInt64 = 3_000_000_000
+
+    /// Задача автосохранения. Отменяется при каждом новом изменении полей,
+    /// запускается заново — реализует debounce без DispatchQueue.
+    private var autosaveTask: Task<Void, Never>?
+
+    /// Флаг: были ли изменения с момента последнего сохранения черновика.
+    private var hasUnsavedChanges: Bool = false
+
     public init(
         accountEmail: String,
         accountDisplayName: String? = nil,
@@ -154,6 +166,65 @@ public final class ComposeViewModel: ObservableObject {
         self.draftSaver = draftSaver
         if let sig = defaultSignatureBody, !sig.isEmpty {
             self.body = "\n\n\(sig)"
+        }
+    }
+
+    /// Вызывается из view при любом изменении редактируемых полей.
+    /// Запускает debounced-автосохранение через 3 секунды бездействия.
+    ///
+    /// SwiftUI-view подписывается через `.onChange(of:)` на `body`, `subject`,
+    /// `toTokens`, `ccTokens`, `bccTokens` и вызывает этот метод.
+    public func notifyContentChanged() {
+        guard draftSaver != nil else { return }
+        hasUnsavedChanges = true
+        autosaveTask?.cancel()
+        autosaveTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: Self.autosaveDebounce)
+            } catch {
+                // Отменена — не сохраняем.
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.performAutosave()
+        }
+    }
+
+    /// Немедленно сохраняет черновик (например, при закрытии окна).
+    public func saveIfNeeded() async {
+        guard hasUnsavedChanges, draftSaver != nil else { return }
+        autosaveTask?.cancel()
+        await performAutosave()
+    }
+
+    /// Отменяет задачу автосохранения (при отправке, закрытии без сохранения).
+    public func cancelAutosave() {
+        autosaveTask?.cancel()
+        autosaveTask = nil
+    }
+
+    /// Выполняет фактическое автосохранение через `draftSaver`.
+    @MainActor
+    private func performAutosave() async {
+        guard hasUnsavedChanges else { return }
+        // Не показываем .saving/.saved в draftState при автосохранении,
+        // чтобы не мигать UI. Тихое сохранение.
+        guard let saver = draftSaver else { return }
+        guard isCcValid, isBccValid else { return }
+        let envelope = DraftEnvelope(
+            from: fromHeader,
+            to: toTokens,
+            cc: ccTokens,
+            bcc: bccTokens,
+            subject: subject
+        )
+        let snapshotBody = body
+        do {
+            try await saver(envelope, snapshotBody)
+            hasUnsavedChanges = false
+        } catch {
+            // Тихая ошибка автосохранения — не пишем в draftState,
+            // повторим через следующий notifyContentChanged.
         }
     }
 
@@ -263,6 +334,8 @@ public final class ComposeViewModel: ObservableObject {
             // Гасим тело сразу после успешной отправки, чтобы не держать
             // его в памяти дольше необходимого.
             body = ""
+            cancelAutosave()
+            hasUnsavedChanges = false
             sendState = .sent
             didFinish = true
         } catch let err as MailError {
@@ -296,6 +369,7 @@ public final class ComposeViewModel: ObservableObject {
         let snapshotBody = body
         do {
             try await saver(envelope, snapshotBody)
+            hasUnsavedChanges = false
             draftState = .saved
         } catch let err as MailError {
             draftState = .error(Self.describe(err))
