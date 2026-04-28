@@ -206,6 +206,15 @@ final class MailCIDSchemeHandler: NSObject, WKURLSchemeHandler {
 **CacheManager** (`actor`) — фасад для Settings UI:
 - `totalSize() async -> Int` — сумма обоих кешей
 - `clearAll() async` — очищает `bodies/` + `attachments/`
+- `evictIfNeeded() async` — вызывается после каждой записи; удаляет самые старые файлы, пока общий размер не опустится ниже лимита
+
+**Лимит и LRU eviction:**
+
+- Лимит по умолчанию: **500 МБ**, настраивается пользователем (50 МБ – 10 ГБ).
+- Хранится в `UserDefaults` (`cacheLimitBytes: Int`).
+- Единица вытеснения — файл (`.html`, `.bin` + `.meta` как пара). Порядок вытеснения — по дате последнего доступа (`atime` файла, обновляется при каждом `read()`).
+- `evictIfNeeded()` вызывается синхронно после `write()` внутри `CacheManager`. Никаких фоновых таймеров — вытеснение происходит только при записи.
+- Вытесняем целиком по `messageID`: удаляем `.html` тела и все `.bin`/`.meta` вложений этого письма вместе.
 
 ---
 
@@ -224,16 +233,56 @@ if isDarkMode && !hasDarkModeSupport → инжектируем:
 
 ---
 
+## Блокировка внешних изображений и трекер-пикселей
+
+**Настройка по умолчанию: блокировать внешние изображения.**
+
+Пользователь может разрешить загрузку глобально в настройках или для конкретного письма кнопкой «Показать изображения» в шапке ридера.
+
+**Реализация:**
+
+`MessageWebViewController` реализует `WKNavigationDelegate.webView(_:decidePolicyFor:decisionHandler:)` для subresource-запросов (`WKNavigationActionPolicy` для navigation) — но subresource-запросы (img src) идут через `WKURLSchemeHandler` или нативный WebKit, и их нельзя перехватить через навигационный делегат.
+
+Блокировка внешних изображений реализуется через **Content Security Policy**, инжектируемый `HTMLPreprocessor`-ом:
+
+```
+// blockExternalImages = true (по умолчанию)
+Content-Security-Policy: script-src 'none'; img-src cid: data: 'self'
+
+// blockExternalImages = false (пользователь нажал «Показать изображения»)
+Content-Security-Policy: script-src 'none'; img-src cid: data: 'self' https:
+```
+
+Поскольку HTML кешируется уже обработанным, флаг `blockExternalImages` передаётся в `HTMLPreprocessor.process()` как параметр и влияет на кешированный файл. При изменении настройки кеш для конкретного письма инвалидируется (`MessageBodyCache.invalidate(messageID)`).
+
+**Кнопка «Показать изображения»:**
+
+Отображается в шапке `MessageWebView`, если `blockExternalImages == true` и в HTML обнаружен хотя бы один внешний `img src` (детектируется в `HTMLPreprocessor` — флаг `hasExternalImages: Bool` в `ProcessedEmail`).
+
+Нажатие: `HTMLPreprocessor.process(rawHTML, blockExternalImages: false)` → перезаписать кеш → перезагрузить WKWebView. Решение применяется только к этому письму, глобальная настройка не меняется.
+
+**Обновлённая структура `ProcessedEmail`:**
+
+```swift
+struct ProcessedEmail {
+    let html: String
+    let hasDarkModeSupport: Bool
+    let hasExternalImages: Bool   // нужна ли кнопка «Показать изображения»
+}
+```
+
+---
+
 ## Settings UI
 
-Фрагмент в `SettingsView` (существующий экран настроек):
+Фрагменты в `SettingsView` (существующий экран настроек):
 
 ```swift
 Section("Кеш") {
     HStack {
         VStack(alignment: .leading) {
             Text("Письма и вложения")
-            Text(cacheManager.formattedSize)  // "124 МБ"
+            Text(cacheManager.formattedSize)  // "124 МБ из 500 МБ"
                 .foregroundStyle(.secondary)
                 .font(.caption)
         }
@@ -242,6 +291,23 @@ Section("Кеш") {
             Task { await cacheManager.clearAll() }
         }
     }
+    // Слайдер или Stepper для лимита
+    LabeledContent("Максимальный размер кеша") {
+        Stepper(
+            value: $settings.cacheLimitMB,
+            in: 50...10240,
+            step: 50
+        ) {
+            Text("\(settings.cacheLimitMB) МБ")
+        }
+    }
+}
+
+Section("Приватность") {
+    Toggle("Блокировать внешние изображения", isOn: $settings.blockExternalImages)
+    Text("Скрывает трекер-пиксели и внешние картинки. Можно разрешить для отдельного письма.")
+        .foregroundStyle(.secondary)
+        .font(.caption)
 }
 ```
 
@@ -262,6 +328,4 @@ Section("Кеш") {
 
 - Zoom controls
 - Print
-- Блокировка внешних изображений / трекер-пиксели
-- Лимит размера кеша (TTL, LRU eviction) — только ручная очистка
 - Офлайн-режим для вложений (скачать заранее)
