@@ -1,4 +1,5 @@
 import SwiftUI
+import AI
 import AppShell
 import Core
 import MockData
@@ -29,6 +30,9 @@ struct ComposeWindowValue: Hashable, Codable {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NotificationManager.shared.setupDelegate()
+        Task {
+            try? await PromptStore.shared.initializeDefaults()
+        }
     }
 }
 
