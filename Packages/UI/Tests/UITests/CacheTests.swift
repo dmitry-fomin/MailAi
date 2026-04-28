@@ -138,4 +138,45 @@ final class AttachmentCacheStoreTests: XCTestCase {
         XCTAssertGreaterThan(size, 400) // .bin (500) + .meta (JSON) > 400
     }
 }
+final class CacheManagerTests: XCTestCase {
+    var manager: CacheManager!
+    var tmpDir: URL!
+
+    override func setUp() async throws {
+        tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        let bodyCache = MessageBodyCache(cacheDir: tmpDir)
+        let attCache = AttachmentCacheStore(cacheDir: tmpDir)
+        manager = CacheManager(bodyCache: bodyCache, attachmentCache: attCache, limitBytes: 500)
+    }
+
+    override func tearDown() async throws {
+        try? FileManager.default.removeItem(at: tmpDir)
+    }
+
+    func testTotalSizeIsZeroInitially() async throws {
+        let size = await manager.totalSize()
+        XCTAssertEqual(size, 0)
+    }
+
+    func testClearAllResetsSize() async throws {
+        await manager.writeBody(messageID: "msg-1", processedHTML: String(repeating: "x", count: 600))
+        await manager.clearAll()
+        let size = await manager.totalSize()
+        XCTAssertEqual(size, 0)
+    }
+
+    func testEvictsOldestWhenOverLimit() async throws {
+        let html1 = String(repeating: "a", count: 300)
+        let html2 = String(repeating: "b", count: 300)
+        await manager.writeBody(messageID: "msg-1", processedHTML: html1)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        await manager.writeBody(messageID: "msg-2", processedHTML: html2)
+        let r1 = await manager.readBody(messageID: "msg-1")
+        XCTAssertNil(r1, "Oldest entry should be evicted")
+        let r2 = await manager.readBody(messageID: "msg-2")
+        XCTAssertNotNil(r2, "Newest entry should remain")
+    }
+}
 #endif
