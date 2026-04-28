@@ -9,6 +9,7 @@ import Core
 /// - Полное тело письма передаётся только в память, не сохраняется.
 public actor ActionExtractor: AIActionExtractor {
     private let provider: any AIProvider
+    private var cachedSystemPrompt: String?
 
     public init(provider: any AIProvider) {
         self.provider = provider
@@ -18,9 +19,10 @@ public actor ActionExtractor: AIActionExtractor {
     /// - Parameter body: Plain text тело (до 2000 символов используется).
     public func extract(body: String) async throws -> [ActionItem] {
         let snippet = String(body.prefix(2000))
+        let system = try await resolveSystemPrompt()
         var fullResponse = ""
         for try await chunk in provider.complete(
-            system: Self.systemPrompt,
+            system: system,
             user: snippet,
             streaming: false,
             maxTokens: 600
@@ -32,8 +34,24 @@ public actor ActionExtractor: AIActionExtractor {
 
     // MARK: - Private
 
+    private func resolveSystemPrompt() async throws -> String {
+        if let cached = cachedSystemPrompt { return cached }
+        let instruction = try await PromptStore.shared.load(id: "extract_actions")
+        let full = instruction + "\n\n" + Self.responseFormat
+        cachedSystemPrompt = full
+        return full
+    }
+
+    private static let responseFormat = """
+        Respond only with valid JSON array, no markdown, no explanation:
+        [{"kind": "deadline|task|meeting|link|question", "text": "description", "dueDate": "ISO8601 or null"}]
+        Rules:
+        - kind must be one of: deadline, task, meeting, link, question
+        - dueDate: ISO8601 string if a date can be inferred, otherwise omit the field
+        - Include only meaningful actions, not generic phrases
+        """
+
     private func parseResponse(_ json: String) throws -> [ActionItem] {
-        // Вырезаем JSON из возможных markdown-блоков.
         let cleaned = stripMarkdown(json)
         guard let data = cleaned.data(using: .utf8) else { return [] }
         let decoded = try JSONDecoder().decode([RawItem].self, from: data)
@@ -61,16 +79,6 @@ public actor ActionExtractor: AIActionExtractor {
         }
         return result
     }
-
-    private static let systemPrompt = """
-        Extract action items from the email body. Return a JSON array of objects with this structure:
-        [{"kind": "deadline|task|meeting|link|question", "text": "description", "dueDate": "ISO8601 or null"}]
-        Rules:
-        - kind must be one of: deadline, task, meeting, link, question
-        - dueDate: ISO8601 string if a date can be inferred, otherwise omit the field
-        - Include only meaningful actions, not generic phrases
-        - Respond only with valid JSON array, no markdown, no explanation
-        """
 
     private struct RawItem: Decodable {
         let kind: String
