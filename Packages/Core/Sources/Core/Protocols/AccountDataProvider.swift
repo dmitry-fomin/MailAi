@@ -16,6 +16,7 @@ public struct Page: Sendable, Hashable {
 ///
 /// Все методы `Sendable`-безопасны и возвращают значения; стримы закрываются,
 /// когда подписчик отменяет задачу.
+@preconcurrency
 public protocol AccountDataProvider: Sendable {
     /// Аккаунт, который обслуживает провайдер.
     var account: Account { get }

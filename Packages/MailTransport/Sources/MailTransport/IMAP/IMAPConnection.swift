@@ -39,7 +39,7 @@ public final class IMAPConnection: @unchecked Sendable {
         endpoint: IMAPEndpoint,
         eventLoopGroup: MultiThreadedEventLoopGroup = .singleton,
         connectTimeout: TimeAmount = .seconds(10),
-        _ body: (IMAPConnection) async throws -> R
+        _ body: @Sendable (IMAPConnection) async throws -> R
     ) async throws -> R {
         let channel = try await IMAPClientBootstrap.connect(
             to: endpoint,
@@ -51,7 +51,7 @@ public final class IMAPConnection: @unchecked Sendable {
 
     public static func withOpen<R>(
         channel: Channel,
-        _ body: (IMAPConnection) async throws -> R
+        _ body: @Sendable (IMAPConnection) async throws -> R
     ) async throws -> R {
         try await channel.executeThenClose { inbound, outbound in
             var iter = inbound.makeAsyncIterator()

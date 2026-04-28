@@ -191,7 +191,7 @@ public actor IMAPSession {
                     try await IMAPConnection.withOpen(
                         endpoint: endpoint,
                         eventLoopGroup: eventLoopGroup
-                    ) { conn in
+                    ) { [self] conn in
                         // Фаза аутентификации.
                         await self?.setState(.authenticating)
                         try await conn.login(username: username, password: password)

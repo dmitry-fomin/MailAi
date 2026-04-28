@@ -313,7 +313,7 @@ public actor IMAPIdleController {
                     try await IMAPConnection.withOpen(
                         endpoint: endpoint,
                         eventLoopGroup: eventLoopGroup
-                    ) { conn in
+                    ) { [self] conn in
                         try await conn.login(username: username, password: password)
                         await self?.markActive(mailbox: nil)
                         await self?.resumeStart(.success(()))

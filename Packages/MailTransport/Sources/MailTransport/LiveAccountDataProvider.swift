@@ -12,11 +12,11 @@ import Secrets
 /// открывать соединения по `Keychain`-секретам.
 /// Actor-изоляция гарантирует атомарность `ensureSession()`: при конкурентных
 /// вызовах только один создаёт IMAPSession, остальные получают уже готовый.
-public actor LiveAccountDataProvider: AccountDataProvider, MailActionsProvider {
-    public let account: Account
-    public let store: any MetadataStore
-    public let secrets: (any SecretsStore)?
-    public let endpoint: IMAPEndpoint
+public actor LiveAccountDataProvider {
+    public nonisolated let account: Account
+    public nonisolated let store: any MetadataStore
+    public nonisolated let secrets: (any SecretsStore)?
+    public nonisolated let endpoint: IMAPEndpoint
 
     /// Long-lived IMAP-сессия. Создаётся лениво при первом обращении,
     /// переиспользуется для всех последующих операций.
@@ -164,7 +164,7 @@ public actor LiveAccountDataProvider: AccountDataProvider, MailActionsProvider {
         }
     }
 
-    public func messages(in mailbox: Mailbox.ID, page: Page) -> AsyncThrowingStream<[Message], any Error> {
+    public nonisolated func messages(in mailbox: Mailbox.ID, page: Page) -> AsyncThrowingStream<[Message], any Error> {
         let store = self.store
         return AsyncThrowingStream { continuation in
             let task = Task { [self] in
@@ -211,7 +211,7 @@ public actor LiveAccountDataProvider: AccountDataProvider, MailActionsProvider {
         }
     }
 
-    public func body(for message: Message.ID) -> AsyncThrowingStream<ByteChunk, any Error> {
+    public nonisolated func body(for message: Message.ID) -> AsyncThrowingStream<ByteChunk, any Error> {
         let store = self.store
         return AsyncThrowingStream { continuation in
             let task = Task { [self] in
@@ -529,3 +529,8 @@ public actor LiveAccountDataProvider: AccountDataProvider, MailActionsProvider {
         )
     }
 }
+
+// @preconcurrency подавляет #ConformanceIsolation: методы протоколов вызываются
+// с await (все async), actor-изоляция ensureSession() обеспечивает корректность.
+extension LiveAccountDataProvider: @preconcurrency AccountDataProvider {}
+extension LiveAccountDataProvider: @preconcurrency MailActionsProvider {}

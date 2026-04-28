@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Core
 
 /// A8: персистентный выбор «последней открытой папки» по аккаунту. Хранится

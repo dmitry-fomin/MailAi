@@ -5,6 +5,7 @@ import Foundation
 /// `LiveAccountDataProvider` реализует; моки могут не реализовывать — тогда
 /// UI-кнопки остаются видимыми, но ничего не делают (ReaderToolbar решает
 /// это сам, проверяя `provider as? any MailActionsProvider`).
+@preconcurrency
 public protocol MailActionsProvider: Sendable {
     func delete(messageID: Message.ID) async throws
     func archive(messageID: Message.ID) async throws
