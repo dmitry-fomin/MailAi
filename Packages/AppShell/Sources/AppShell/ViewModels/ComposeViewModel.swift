@@ -18,13 +18,34 @@ public final class ComposeViewModel: ObservableObject {
     /// `@MainActor`-контекста, а внутрь оборачивает actor-вызов.
     public typealias DraftSaver = @Sendable (DraftEnvelope, String) async throws -> Void
 
-    // MARK: - Form state
+    // MARK: - Form state (tokens)
 
-    @Published public var to: String = ""
-    @Published public var cc: String = ""
-    @Published public var bcc: String = ""
+    /// Массивы токенов для полей адресатов.
+    /// AddressTokenField работает напрямую с этими массивами.
+    @Published public var toTokens: [String] = []
+    @Published public var ccTokens: [String] = []
+    @Published public var bccTokens: [String] = []
+
     @Published public var subject: String = ""
     @Published public var body: String = ""
+
+    // MARK: - Строковые алиасы (обратная совместимость)
+
+    /// Строковое представление поля «Кому» для MIME и DraftEnvelope.
+    public var to: String {
+        get { toTokens.joined(separator: ", ") }
+        set { toTokens = Self.split(newValue) }
+    }
+
+    public var cc: String {
+        get { ccTokens.joined(separator: ", ") }
+        set { ccTokens = Self.split(newValue) }
+    }
+
+    public var bcc: String {
+        get { bccTokens.joined(separator: ", ") }
+        set { bccTokens = Self.split(newValue) }
+    }
 
     // MARK: - UI state
 
@@ -80,15 +101,15 @@ public final class ComposeViewModel: ObservableObject {
 
     /// Поле «To» должно содержать минимум один валидный e-mail.
     public var isToValid: Bool {
-        !parsedTo.isEmpty && parsedTo.allSatisfy(Self.isValidEmail)
+        !toTokens.isEmpty && toTokens.allSatisfy(Self.isValidEmail)
     }
 
     public var isCcValid: Bool {
-        parsedCc.allSatisfy(Self.isValidEmail)
+        ccTokens.allSatisfy(Self.isValidEmail)
     }
 
     public var isBccValid: Bool {
-        parsedBcc.allSatisfy(Self.isValidEmail)
+        bccTokens.allSatisfy(Self.isValidEmail)
     }
 
     public var isFormValid: Bool {
@@ -99,14 +120,10 @@ public final class ComposeViewModel: ObservableObject {
     public var hasUnsavedContent: Bool {
         !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !to.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !toTokens.isEmpty
     }
 
     // MARK: - Parsing
-
-    private var parsedTo: [String] { Self.split(to) }
-    private var parsedCc: [String] { Self.split(cc) }
-    private var parsedBcc: [String] { Self.split(bcc) }
 
     /// Делит строку «addr1, addr2; addr3» на массив адресов, выкидывая
     /// пустые элементы. Логирование адресов запрещено — функция чистая.
@@ -161,16 +178,16 @@ public final class ComposeViewModel: ObservableObject {
         sendState = .sending
         let envelope = Envelope(
             from: accountEmail,
-            to: parsedTo,
-            cc: parsedCc,
-            bcc: parsedBcc
+            to: toTokens,
+            cc: ccTokens,
+            bcc: bccTokens
         )
         let mime = MIMEComposer.compose(
             from: fromHeader,
             recipients: MIMEComposer.Recipients(
-                to: parsedTo,
-                cc: parsedCc,
-                bcc: parsedBcc
+                to: toTokens,
+                cc: ccTokens,
+                bcc: bccTokens
             ),
             subject: subject,
             body: body
@@ -199,16 +216,16 @@ public final class ComposeViewModel: ObservableObject {
         // Для черновика разрешаем пустой список получателей — это нормально:
         // пользователь дописывает письмо. Минимально требуем валидность
         // непустых полей.
-        guard isCcValid, isBccValid, parsedTo.allSatisfy(Self.isValidEmail) else {
+        guard isCcValid, isBccValid, toTokens.allSatisfy(Self.isValidEmail) else {
             draftState = .error("Проверьте поля получателей")
             return
         }
         draftState = .saving
         let envelope = DraftEnvelope(
             from: fromHeader,
-            to: parsedTo,
-            cc: parsedCc,
-            bcc: parsedBcc,
+            to: toTokens,
+            cc: ccTokens,
+            bcc: bccTokens,
             subject: subject
         )
         let snapshotBody = body
@@ -231,7 +248,7 @@ public final class ComposeViewModel: ObservableObject {
         if case .saved = draftState { draftState = .idle }
     }
 
-    // MARK: - Factory methods
+    // MARK: - Factory methods (Reply / ReplyAll / Forward)
 
     /// Reply: заполняет поле To = from исходного письма, Subject = "Re: …",
     /// тело — цитата исходного письма. Если передана подпись — добавляется перед цитатой.
@@ -250,9 +267,11 @@ public final class ComposeViewModel: ObservableObject {
             draftSaver: draftSaver,
             defaultSignatureBody: defaultSignatureBody
         )
-        vm.to = original.from?.address ?? ""
+        if let fromAddress = original.from?.address, !fromAddress.isEmpty {
+            vm.toTokens = [fromAddress]
+        }
         vm.subject = Self.reSubject(original.subject)
-        vm.body = (vm.body) + Self.quotedBody(original)
+        vm.body = vm.body + Self.quotedBody(original)
         return vm
     }
 
@@ -272,13 +291,14 @@ public final class ComposeViewModel: ObservableObject {
             draftSaver: draftSaver,
             defaultSignatureBody: defaultSignatureBody
         )
-        vm.to = original.from?.address ?? ""
-        let ccAddresses = (original.to + original.cc)
+        if let fromAddress = original.from?.address, !fromAddress.isEmpty {
+            vm.toTokens = [fromAddress]
+        }
+        vm.ccTokens = (original.to + original.cc)
             .map(\.address)
             .filter { $0.lowercased() != accountEmail.lowercased() }
-        vm.cc = ccAddresses.joined(separator: ", ")
         vm.subject = Self.reSubject(original.subject)
-        vm.body = (vm.body) + Self.quotedBody(original)
+        vm.body = vm.body + Self.quotedBody(original)
         return vm
     }
 
@@ -299,8 +319,43 @@ public final class ComposeViewModel: ObservableObject {
             defaultSignatureBody: defaultSignatureBody
         )
         vm.subject = Self.fwdSubject(original.subject)
-        vm.body = (vm.body) + Self.quotedBody(original)
+        vm.body = vm.body + Self.quotedBody(original)
         return vm
+    }
+
+    // MARK: - Instance reply/forward initializers
+
+    /// Применяет режим «Ответить» к текущему экземпляру ViewModel.
+    public func reply(to original: Message) {
+        if let fromAddress = original.from?.address, !fromAddress.isEmpty {
+            toTokens = [fromAddress]
+        }
+        ccTokens = []
+        bccTokens = []
+        subject = Self.reSubject(original.subject)
+        body = body + Self.quotedBody(original)
+    }
+
+    /// Применяет режим «Ответить всем» к текущему экземпляру ViewModel.
+    public func replyAll(to original: Message) {
+        if let fromAddress = original.from?.address, !fromAddress.isEmpty {
+            toTokens = [fromAddress]
+        }
+        ccTokens = (original.to + original.cc)
+            .map(\.address)
+            .filter { $0.lowercased() != accountEmail.lowercased() }
+        bccTokens = []
+        subject = Self.reSubject(original.subject)
+        body = body + Self.quotedBody(original)
+    }
+
+    /// Применяет режим «Переслать» к текущему экземпляру ViewModel.
+    public func forward(message original: Message) {
+        toTokens = []
+        ccTokens = []
+        bccTokens = []
+        subject = Self.fwdSubject(original.subject)
+        body = body + Self.quotedBody(original)
     }
 
     // MARK: - Quote helpers

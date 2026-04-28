@@ -1,9 +1,13 @@
 import SwiftUI
 import Core
+import UI
 
 /// SMTP-5: окно «Новое письмо». Поля To/Cc/Bcc/Subject + multiline-тело,
 /// кнопки «Отправить» / «Сохранить черновик», индикатор состояния и
 /// confirmation на закрытии при непустом черновике.
+///
+/// Поля адресатов реализованы через `AddressTokenField` — каждый введённый
+/// адрес превращается в токен (chip). Тело письма — NSTextView через TextEditor.
 public struct ComposeScene: View {
     @ObservedObject var model: ComposeViewModel
 
@@ -55,7 +59,7 @@ public struct ComposeScene: View {
 
     private var header: some View {
         HStack {
-            Text("Новое письмо")
+            Text(windowTitle)
                 .font(.headline)
             Spacer()
             Text("От: \(model.accountEmail)")
@@ -66,85 +70,110 @@ public struct ComposeScene: View {
         .padding(.vertical, 10)
     }
 
+    private var windowTitle: String {
+        if model.subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Новое письмо"
+        }
+        return model.subject
+    }
+
     // MARK: - Form
 
     private var form: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                recipientField(
+            VStack(alignment: .leading, spacing: 0) {
+                tokenRecipientRow(
                     title: "Кому",
-                    text: $model.to,
-                    isValid: model.to.isEmpty || model.isToValid,
+                    tokens: $model.toTokens,
+                    isValid: model.toTokens.isEmpty || model.isToValid,
                     placeholder: "name@example.com, …"
                 )
-                recipientField(
+                Divider().padding(.leading, 72)
+
+                tokenRecipientRow(
                     title: "Копия",
-                    text: $model.cc,
+                    tokens: $model.ccTokens,
                     isValid: model.isCcValid,
                     placeholder: "необязательно"
                 )
-                recipientField(
-                    title: "Скрытая копия",
-                    text: $model.bcc,
+                Divider().padding(.leading, 72)
+
+                tokenRecipientRow(
+                    title: "Скрытая",
+                    tokens: $model.bccTokens,
                     isValid: model.isBccValid,
                     placeholder: "необязательно"
                 )
-                subjectField
+                Divider().padding(.leading, 72)
+
+                subjectRow
+                Divider().padding(.leading, 72)
+
                 bodyField
             }
-            .padding(16)
         }
     }
 
+    // MARK: - Token recipient row
+
     @ViewBuilder
-    private func recipientField(
+    private func tokenRecipientRow(
         title: String,
-        text: Binding<String>,
+        tokens: Binding<[String]>,
         isValid: Bool,
         placeholder: String
     ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .top, spacing: 0) {
             Text(title)
-                .font(.caption)
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
-            TextField(placeholder, text: text)
-                .textFieldStyle(.roundedBorder)
-                .disableAutocorrection(true)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(isValid ? Color.clear : Color.red.opacity(0.6), lineWidth: 1)
-                )
-            if !isValid {
-                Text("Проверьте формат адресов")
-                    .font(.caption2)
-                    .foregroundStyle(.red)
+                .frame(width: 64, alignment: .trailing)
+                .padding(.top, 10)
+                .padding(.trailing, 8)
+
+            VStack(alignment: .leading, spacing: 2) {
+                AddressTokenField(tokens: tokens, placeholder: placeholder)
+                    .padding(.vertical, 4)
+
+                if !isValid {
+                    Text("Проверьте формат адресов")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .padding(.bottom, 2)
+                }
             }
+            .padding(.trailing, 16)
         }
+        .padding(.leading, 8)
     }
 
-    private var subjectField: some View {
-        VStack(alignment: .leading, spacing: 4) {
+    // MARK: - Subject row
+
+    private var subjectRow: some View {
+        HStack(alignment: .center, spacing: 0) {
             Text("Тема")
-                .font(.caption)
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .frame(width: 64, alignment: .trailing)
+                .padding(.trailing, 8)
+
             TextField("Без темы", text: $model.subject)
-                .textFieldStyle(.roundedBorder)
+                .font(.body)
+                .textFieldStyle(.plain)
+                .padding(.vertical, 10)
+                .padding(.trailing, 16)
         }
+        .padding(.leading, 8)
     }
+
+    // MARK: - Body field
 
     private var bodyField: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Текст")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            TextEditor(text: $model.body)
-                .font(.body)
-                .frame(minHeight: 220)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-                )
-        }
+        TextEditor(text: $model.body)
+            .font(.body)
+            .frame(minHeight: 220)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
     }
 
     // MARK: - Footer
