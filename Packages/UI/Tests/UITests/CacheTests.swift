@@ -59,5 +59,15 @@ final class MessageBodyCacheTests: XCTestCase {
         let size = await cache.totalSize()
         XCTAssertGreaterThan(size, 500)
     }
+
+    func testAllFilesReturnsCorrectMessageIDHash() async throws {
+        await cache.write(messageID: "test-message-id", processedHTML: "<p>test</p>")
+        let files = await cache.allFiles()
+        XCTAssertEqual(files.count, 1)
+        // messageIDHash должен совпадать с хешем из fileURL(for:)
+        let expectedURL = await cache.fileURL(for: "test-message-id")
+        let expectedHash = expectedURL.deletingPathExtension().lastPathComponent
+        XCTAssertEqual(files[0].messageIDHash, expectedHash)
+    }
 }
 #endif

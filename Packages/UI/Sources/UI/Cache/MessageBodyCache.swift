@@ -50,6 +50,7 @@ public actor MessageBodyCache {
             at: bodiesDir, includingPropertiesForKeys: [.contentAccessDateKey]
         ) else { return [] }
         return items.compactMap { url in
+            guard url.pathExtension == "html" else { return nil }
             let hash = url.deletingPathExtension().lastPathComponent
             let date = (try? url.resourceValues(forKeys: [.contentAccessDateKey]))?.contentAccessDate ?? Date.distantPast
             return (url, date, hash)
