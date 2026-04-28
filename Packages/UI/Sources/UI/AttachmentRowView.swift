@@ -2,22 +2,27 @@ import SwiftUI
 import Core
 
 /// Одна строка в списке вложений: иконка типа файла, имя, размер,
-/// кнопки Quick Look и Save As. Клик на строку вызывает Quick Look.
+/// кнопки Quick Look, Save As и (для поддерживаемых форматов) AI Summarize.
 public struct AttachmentRowView: View {
     public let attachment: Attachment
     public var onQuickLook: () -> Void
     public var onSaveAs: () -> Void
+    /// Суммаризация вложения через AI. nil — кнопка не показывается.
+    /// Показывается только для PDF, DOCX, TXT, RTF.
+    public var onSummarize: (() -> Void)?
 
     @State private var isHovered: Bool = false
 
     public init(
         attachment: Attachment,
         onQuickLook: @escaping () -> Void = {},
-        onSaveAs: @escaping () -> Void = {}
+        onSaveAs: @escaping () -> Void = {},
+        onSummarize: (() -> Void)? = nil
     ) {
         self.attachment = attachment
         self.onQuickLook = onQuickLook
         self.onSaveAs = onSaveAs
+        self.onSummarize = onSummarize
     }
 
     public var body: some View {
@@ -51,6 +56,15 @@ public struct AttachmentRowView: View {
             }
             .buttonStyle(.borderless)
             .accessibilityLabel("Сохранить как…")
+
+            if let onSummarize, canSummarize(mimeType: attachment.mimeType) {
+                Button(action: onSummarize) {
+                    Image(systemName: "sparkles")
+                        .help("Суммаризовать (AI)")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Суммаризовать через AI")
+            }
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 6)
@@ -69,6 +83,16 @@ public struct AttachmentRowView: View {
     }
 
     // MARK: - Helpers
+
+    private func canSummarize(mimeType: String) -> Bool {
+        let lower = mimeType.lowercased()
+        return lower.contains("pdf")
+            || lower.hasPrefix("text/")
+            || lower.contains("rtf")
+            || lower.contains("word")
+            || lower.contains("msword")
+            || lower.contains("openxmlformats-officedocument.wordprocessingml")
+    }
 
     private func formattedSize(_ bytes: Int) -> String {
         let kb = Double(bytes) / 1024
