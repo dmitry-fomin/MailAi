@@ -525,7 +525,7 @@ public struct AccountWindowScene: View {
                             content: .plain(translation.text),
                             attachments: body.attachments
                         ),
-                        messageID: body.messageID,
+                        messageID: body.messageID.rawValue,
                         cacheManager: cacheManager,
                         onSaveAttachment: { att in saveAttachment(att) },
                         isFocused: Binding(
@@ -536,7 +536,7 @@ public struct AccountWindowScene: View {
                 } else {
                     ReaderBodyView(
                         body: body,
-                        messageID: body.messageID,
+                        messageID: body.messageID.rawValue,
                         cacheManager: cacheManager,
                         onSaveAttachment: { att in saveAttachment(att) },
                         isFocused: Binding(
@@ -577,7 +577,13 @@ public struct AccountWindowScene: View {
         let text: String
         switch body.content {
         case .plain(let s): text = s
-        case .html(let h): text = HTMLSanitizer.plainText(from: h)
+        case .html(let h):
+            let data = Data(h.utf8)
+            let opts: [NSAttributedString.DocumentReadingOptionKey: Any] = [
+                .documentType: NSAttributedString.DocumentType.html,
+                .characterEncoding: String.Encoding.utf8.rawValue
+            ]
+            text = (try? NSAttributedString(data: data, options: opts, documentAttributes: nil))?.string ?? h
         }
         guard !text.isEmpty else { return }
         isTranslating = true
