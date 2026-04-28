@@ -108,7 +108,8 @@ public enum EWSResponseParser {
             isRead: isRead,
             hasAttachments: hasAttach,
             importance: importance,
-            listUnsubscribeHeader: nil
+            listUnsubscribeHeader: nil,
+            listUnsubscribePostHeader: nil
         )
     }
 

@@ -305,7 +305,8 @@ public struct EWSItem: Sendable {
     public let isRead: Bool
     public let hasAttachments: Bool
     public let importance: String
-    public let listUnsubscribeHeader: String?  // nil в FindItem, заполняется через GetItem
+    public let listUnsubscribeHeader: String?      // nil в FindItem, заполняется через GetItem
+    public let listUnsubscribePostHeader: String?  // nil в FindItem, заполняется через GetItem
 }
 
 public struct EWSFindItemResult: Sendable {

@@ -15,6 +15,7 @@ public enum Schema {
         SchemaV4.register(&migrator)
         SchemaV5.register(&migrator)
         SchemaV6.register(&migrator)
+        SchemaV7.register(&migrator)
     }
 
     static func registerV1(_ migrator: inout DatabaseMigrator) {

@@ -3,9 +3,8 @@ import Core
 
 /// Определяет возможность отписки по метаданным письма.
 ///
-/// Разбирает заголовок `List-Unsubscribe` (поле `message.listUnsubscribe`).
-/// AI-фоллбек не реализован — для него нужно тело письма, которое метаданные
-/// не содержат.
+/// Разбирает заголовки `List-Unsubscribe` (RFC 2369) и `List-Unsubscribe-Post`
+/// (RFC 8058). AI-фоллбек не реализован — для него нужно тело письма.
 public actor UnsubscribeDetector {
     public init() {}
 
@@ -15,7 +14,7 @@ public actor UnsubscribeDetector {
         guard let raw = message.listUnsubscribe, !raw.isEmpty else {
             return UnsubscribeInfo(action: .notFound, detectedFrom: .listHeader)
         }
-        let action = parse(raw: raw)
+        let action = parse(raw: raw, listUnsubscribePost: message.listUnsubscribePost)
         return UnsubscribeInfo(action: action, detectedFrom: .listHeader)
     }
 
@@ -24,12 +23,15 @@ public actor UnsubscribeDetector {
     /// Разбирает строку формата `<https://...>, <mailto:...>` или их подмножество.
     ///
     /// Порядок приоритетов:
-    /// 1. Если строка содержит `List-Unsubscribe=One-Click` (RFC 8058) — `oneClickPost`.
+    /// 1. Если заголовок `List-Unsubscribe-Post` содержит `List-Unsubscribe=One-Click`
+    ///    (RFC 8058) — `oneClickPost`.
     /// 2. Иначе если есть URL с `https:` — `browserLink`.
     /// 3. Иначе если есть `mailto:` — `mailto`.
     /// 4. Иначе — `notFound`.
-    private func parse(raw: String) -> UnsubscribeAction {
-        let isOneClick = raw.range(
+    private func parse(raw: String, listUnsubscribePost: String?) -> UnsubscribeAction {
+        // RFC 8058: признак one-click — отдельный заголовок List-Unsubscribe-Post,
+        // а не содержимое List-Unsubscribe.
+        let isOneClick = listUnsubscribePost?.range(
             of: "List-Unsubscribe=One-Click",
             options: [.caseInsensitive]
         ) != nil

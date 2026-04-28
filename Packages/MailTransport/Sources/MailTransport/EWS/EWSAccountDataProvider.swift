@@ -224,7 +224,8 @@ public final class EWSAccountDataProvider: AccountDataProvider, MailActionsProvi
             size: item.size,
             flags: flags,
             importance: importance,
-            listUnsubscribe: item.listUnsubscribeHeader
+            listUnsubscribe: item.listUnsubscribeHeader,
+            listUnsubscribePost: item.listUnsubscribePostHeader
         )
     }
 

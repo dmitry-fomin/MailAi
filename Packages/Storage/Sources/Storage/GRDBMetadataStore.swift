@@ -181,7 +181,8 @@ public actor GRDBMetadataStore: MetadataStore {
                 let tableName = (row["table_name"] as String?) ?? ""
                 guard !excludedTables.contains(tableName.lowercased()) else { continue }
                 let col = (row["column_name"] as String?) ?? ""
-                if ["body", "html", "text_body", "attachments_data", "ai_snippet"].contains(col.lowercased()) {
+                // ai_snippet — разрешённый AI-сниппет (≤150 символов), не тело письма.
+                if ["body", "html", "text_body", "attachments_data"].contains(col.lowercased()) {
                     return true
                 }
             }
