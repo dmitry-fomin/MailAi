@@ -28,7 +28,10 @@ public actor AttachmentCacheStore {
               let metaData = try? Data(contentsOf: metaURL),
               let meta = try? JSONDecoder().decode(AttachmentMeta.self, from: metaData)
         else { return nil }
-        try? (binURL as NSURL).setResourceValue(Date(), forKey: .contentAccessDateKey)
+        // Обновляем дату доступа у ОБОИХ файлов — allFiles() читает дату у .meta
+        let now = Date()
+        try? (binURL as NSURL).setResourceValue(now, forKey: .contentAccessDateKey)
+        try? (metaURL as NSURL).setResourceValue(now, forKey: .contentAccessDateKey)
         return (data, meta.mimeType)
     }
 

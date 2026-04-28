@@ -112,5 +112,30 @@ final class AttachmentCacheStoreTests: XCTestCase {
         let files = await store.allFiles()
         XCTAssertTrue(files.contains { $0.messageIDHash == AttachmentCacheStore.sha256("msg-abc") })
     }
+
+    func testDeleteByMessageIDHashRemovesAllAttachments() async throws {
+        let data = Data([0x01])
+        // Два вложения для одного письма
+        await store.write(messageID: "msg-del", contentID: "img001", data: data, mimeType: "image/png")
+        await store.write(messageID: "msg-del", contentID: "img002", data: data, mimeType: "image/jpeg")
+        // Одно вложение для другого письма — не должно удалиться
+        await store.write(messageID: "msg-keep", contentID: "img001", data: data, mimeType: "image/gif")
+
+        await store.deleteByMessageIDHash(AttachmentCacheStore.sha256("msg-del"))
+
+        let r1 = await store.read(messageID: "msg-del", contentID: "img001")
+        let r2 = await store.read(messageID: "msg-del", contentID: "img002")
+        let r3 = await store.read(messageID: "msg-keep", contentID: "img001")
+        XCTAssertNil(r1, "img001 of msg-del should be deleted")
+        XCTAssertNil(r2, "img002 of msg-del should be deleted")
+        XCTAssertNotNil(r3, "msg-keep attachment should survive")
+    }
+
+    func testTotalSizeReflectsWritten() async throws {
+        let data = Data(repeating: 0xFF, count: 500)
+        await store.write(messageID: "msg-size", contentID: "img001", data: data, mimeType: "image/png")
+        let size = await store.totalSize()
+        XCTAssertGreaterThan(size, 400) // .bin (500) + .meta (JSON) > 400
+    }
 }
 #endif
