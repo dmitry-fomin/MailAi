@@ -29,6 +29,71 @@ public final class ComposeViewModel: ObservableObject {
     @Published public var subject: String = ""
     @Published public var body: String = ""
 
+    // MARK: - Attachments
+
+    /// Прикреплённые файлы. Данные живут только в памяти до отправки / очистки.
+    @Published public private(set) var attachedFiles: [ComposeAttachment] = []
+
+    /// Суммарный размер всех вложений в байтах.
+    public var totalAttachmentSize: Int {
+        attachedFiles.reduce(0) { $0 + $1.size }
+    }
+
+    /// Предупреждение о большом размере вложений (>25 МБ).
+    public var attachmentSizeWarning: String? {
+        let limit = 25 * 1024 * 1024
+        guard totalAttachmentSize > limit else { return nil }
+        let mb = Double(totalAttachmentSize) / (1024 * 1024)
+        return String(format: "Суммарный размер вложений %.1f МБ превышает рекомендуемые 25 МБ. Письмо может не дойти.", mb)
+    }
+
+    /// Добавляет файл по URL. Читает данные в память; тело файла не пишется на диск.
+    public func attachFile(url: URL) {
+        guard url.isFileURL else { return }
+        guard (try? url.checkResourceIsReachable()) == true else { return }
+        // Избегаем дублей по пути
+        let path = url.path
+        guard !attachedFiles.contains(where: { $0.url.path == path }) else { return }
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return }
+        let att = ComposeAttachment(
+            url: url,
+            filename: url.lastPathComponent,
+            mimeType: mimeType(for: url),
+            data: data
+        )
+        attachedFiles.append(att)
+    }
+
+    /// Удаляет вложение по ID.
+    public func removeAttachment(id: ComposeAttachment.ID) {
+        attachedFiles.removeAll { $0.id == id }
+    }
+
+    /// MIME-тип по расширению файла (простая эвристика).
+    private func mimeType(for url: URL) -> String {
+        let ext = url.pathExtension.lowercased()
+        switch ext {
+        case "jpg", "jpeg": return "image/jpeg"
+        case "png": return "image/png"
+        case "gif": return "image/gif"
+        case "webp": return "image/webp"
+        case "pdf": return "application/pdf"
+        case "doc": return "application/msword"
+        case "docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        case "xls": return "application/vnd.ms-excel"
+        case "xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        case "ppt": return "application/vnd.ms-powerpoint"
+        case "pptx": return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        case "zip": return "application/zip"
+        case "txt": return "text/plain"
+        case "html", "htm": return "text/html"
+        case "mp3": return "audio/mpeg"
+        case "mp4": return "video/mp4"
+        case "mov": return "video/quicktime"
+        default: return "application/octet-stream"
+        }
+    }
+
     // MARK: - Строковые алиасы (обратная совместимость)
 
     /// Строковое представление поля «Кому» для MIME и DraftEnvelope.

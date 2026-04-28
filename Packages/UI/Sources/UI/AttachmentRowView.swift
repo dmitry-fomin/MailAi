@@ -1,11 +1,14 @@
 import SwiftUI
 import Core
 
-/// Одна строка в списке вложений: имя файла, размер, кнопки Quick Look и Save As.
+/// Одна строка в списке вложений: иконка типа файла, имя, размер,
+/// кнопки Quick Look и Save As. Клик на строку вызывает Quick Look.
 public struct AttachmentRowView: View {
     public let attachment: Attachment
     public var onQuickLook: () -> Void
     public var onSaveAs: () -> Void
+
+    @State private var isHovered: Bool = false
 
     public init(
         attachment: Attachment,
@@ -20,7 +23,8 @@ public struct AttachmentRowView: View {
     public var body: some View {
         HStack(spacing: 8) {
             Image(systemName: iconName(for: attachment.mimeType))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 16))
+                .foregroundStyle(iconColor(for: attachment.mimeType))
                 .frame(width: 20)
 
             VStack(alignment: .leading, spacing: 1) {
@@ -36,7 +40,7 @@ public struct AttachmentRowView: View {
 
             Button(action: onQuickLook) {
                 Image(systemName: "eye")
-                    .help("Быстрый просмотр")
+                    .help("Быстрый просмотр (пробел)")
             }
             .buttonStyle(.borderless)
             .accessibilityLabel("Быстрый просмотр")
@@ -48,12 +52,20 @@ public struct AttachmentRowView: View {
             .buttonStyle(.borderless)
             .accessibilityLabel("Сохранить как…")
         }
-        .padding(.vertical, 2)
-        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(Color(nsColor: .quaternaryLabelColor).opacity(0.5))
+                .fill(isHovered
+                    ? Color(nsColor: .tertiaryLabelColor).opacity(0.4)
+                    : Color(nsColor: .quaternaryLabelColor).opacity(0.5))
         )
+        .onHover { hovering in isHovered = hovering }
+        .onTapGesture(count: 2) { onQuickLook() }
+        .onTapGesture(count: 1) { onQuickLook() }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction(named: "Быстрый просмотр") { onQuickLook() }
+        .accessibilityAction(named: "Сохранить как…") { onSaveAs() }
     }
 
     // MARK: - Helpers
@@ -77,7 +89,22 @@ public struct AttachmentRowView: View {
         if lower.contains("zip") || lower.contains("archive") || lower.contains("gzip") {
             return "archivebox"
         }
-        if lower.contains("text/") { return "doc.text" }
+        if lower.contains("word") || lower.contains("msword") { return "doc.text" }
+        if lower.contains("excel") || lower.contains("spreadsheet") { return "tablecells" }
+        if lower.contains("presentation") || lower.contains("powerpoint") { return "rectangle.on.rectangle" }
+        if lower.hasPrefix("text/") { return "doc.text" }
         return "paperclip"
+    }
+
+    private func iconColor(for mimeType: String) -> Color {
+        let lower = mimeType.lowercased()
+        if lower.hasPrefix("image/") { return .blue }
+        if lower.hasPrefix("video/") { return .purple }
+        if lower.hasPrefix("audio/") { return .pink }
+        if lower.contains("pdf") { return .red }
+        if lower.contains("zip") || lower.contains("archive") { return .orange }
+        if lower.contains("excel") || lower.contains("spreadsheet") { return .green }
+        if lower.contains("word") || lower.contains("msword") { return .blue }
+        return Color(nsColor: .secondaryLabelColor)
     }
 }

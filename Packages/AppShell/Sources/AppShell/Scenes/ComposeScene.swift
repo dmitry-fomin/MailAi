@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 import Core
 import UI
 
@@ -8,6 +10,8 @@ import UI
 ///
 /// Поля адресатов реализованы через `AddressTokenField` — каждый введённый
 /// адрес превращается в токен (chip). Тело письма — NSTextView через TextEditor.
+/// Вложения: drag-and-drop файлов на окно, кнопка «Прикрепить» (NSOpenPanel),
+/// список прикреплённых файлов с кнопкой удаления.
 public struct ComposeScene: View {
     @ObservedObject var model: ComposeViewModel
 
@@ -15,6 +19,7 @@ public struct ComposeScene: View {
     let onClose: () -> Void
 
     @State private var showCloseConfirmation: Bool = false
+    @State private var isDragTargeted: Bool = false
 
     public init(model: ComposeViewModel, onClose: @escaping () -> Void) {
         self.model = model
@@ -30,6 +35,10 @@ public struct ComposeScene: View {
             footer
         }
         .frame(minWidth: 540, idealWidth: 640, minHeight: 480, idealHeight: 600)
+        .overlay(dragOverlay)
+        .onDrop(of: [.fileURL], isTargeted: $isDragTargeted) { providers in
+            handleDrop(providers: providers)
+        }
         .onChange(of: model.didFinish) { _, finished in
             if finished { onClose() }
         }
@@ -169,17 +178,103 @@ public struct ComposeScene: View {
     // MARK: - Body field
 
     private var bodyField: some View {
-        TextEditor(text: $model.body)
-            .font(.body)
-            .frame(minHeight: 220)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+        VStack(spacing: 0) {
+            TextEditor(text: $model.body)
+                .font(.body)
+                .frame(minHeight: 180)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+
+            if !model.attachedFiles.isEmpty {
+                Divider()
+                attachmentsSection
+            }
+        }
+    }
+
+    // MARK: - Attachments section
+
+    private var attachmentsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Вложения (\(model.attachedFiles.count))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if let warning = model.attachmentSizeWarning {
+                    Label(warning, systemImage: "exclamationmark.triangle")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                }
+            }
+
+            ForEach(model.attachedFiles) { att in
+                ComposeAttachmentRow(
+                    attachment: att,
+                    onRemove: { model.removeAttachment(id: att.id) }
+                )
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    // MARK: - Drag overlay
+
+    @ViewBuilder
+    private var dragOverlay: some View {
+        if isDragTargeted {
+            ZStack {
+                Color(nsColor: .controlAccentColor).opacity(0.15)
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color(nsColor: .controlAccentColor), style: StrokeStyle(lineWidth: 2, dash: [8, 4]))
+                    .padding(8)
+                VStack(spacing: 8) {
+                    Image(systemName: "paperclip.circle.fill")
+                        .font(.largeTitle)
+                        .foregroundStyle(Color(nsColor: .controlAccentColor))
+                    Text("Отпустите для прикрепления")
+                        .font(.headline)
+                        .foregroundStyle(Color(nsColor: .controlAccentColor))
+                }
+            }
+            .allowsHitTesting(false)
+        }
+    }
+
+    // MARK: - Drop handler
+
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        var handled = false
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    guard let data = item as? Data,
+                          let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
+                    Task { @MainActor in
+                        self.model.attachFile(url: url)
+                    }
+                }
+                handled = true
+            }
+        }
+        return handled
     }
 
     // MARK: - Footer
 
     private var footer: some View {
         HStack(spacing: 12) {
+            // Кнопка прикрепления файлов
+            Button {
+                openAttachmentPicker()
+            } label: {
+                Label("Прикрепить", systemImage: "paperclip")
+            }
+            .help("Прикрепить файл (⌥⌘A)")
+            .keyboardShortcut("a", modifiers: [.option, .command])
+
             statusLabel
             Spacer()
             Button("Закрыть") {
@@ -198,6 +293,24 @@ public struct ComposeScene: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+
+    // MARK: - Attachment picker (NSOpenPanel)
+
+    private func openAttachmentPicker() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.prompt = "Прикрепить"
+        panel.begin { response in
+            guard response == .OK else { return }
+            Task { @MainActor in
+                for url in panel.urls {
+                    model.attachFile(url: url)
+                }
+            }
+        }
     }
 
     private var isBusy: Bool {
