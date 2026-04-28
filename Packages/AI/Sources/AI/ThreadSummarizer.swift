@@ -9,6 +9,7 @@ import Core
 /// - Тела писем не сохраняются: только snippet 300 символов в памяти.
 public actor ThreadSummarizer: AISummarizer {
     private let provider: any AIProvider
+    private var cachedSystemPrompt: String?
 
     public init(provider: any AIProvider) {
         self.provider = provider
@@ -21,15 +22,40 @@ public actor ThreadSummarizer: AISummarizer {
     ) -> AsyncThrowingStream<String, any Error> {
         let capped = Array(inputs.prefix(10))
         let userPrompt = buildUserPrompt(inputs: capped)
-        return provider.complete(
-            system: Self.systemPrompt,
-            user: userPrompt,
-            streaming: true,
-            maxTokens: 512
-        )
+        return AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    let system = try await self.resolveSystemPrompt()
+                    for try await chunk in self.provider.complete(
+                        system: system,
+                        user: userPrompt,
+                        streaming: true,
+                        maxTokens: 512
+                    ) {
+                        continuation.yield(chunk)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
     }
 
     // MARK: - Private
+
+    private func resolveSystemPrompt() async throws -> String {
+        if let cached = cachedSystemPrompt { return cached }
+        let instruction = try await PromptStore.shared.load(id: "summarize")
+        let full = instruction + "\n\n" + Self.responseFormat
+        cachedSystemPrompt = full
+        return full
+    }
+
+    private static let responseFormat = """
+        Respond only with valid JSON, no markdown, no explanation:
+        {"summary": "2-3 sentence summary of the thread", "participants": ["address1", "address2"], "keyPoints": ["point 1", "point 2"]}
+        """
 
     private func buildUserPrompt(inputs: [MessageSummaryInput]) -> String {
         let dateFormatter = ISO8601DateFormatter()
@@ -44,10 +70,4 @@ public actor ThreadSummarizer: AISummarizer {
         }.joined(separator: "\n\n")
         return messages
     }
-
-    private static let systemPrompt = """
-        You are an email thread summarizer. Given a sequence of email messages, respond with a JSON object with this structure:
-        {"summary": "2-3 sentence summary of the thread", "participants": ["address1", "address2"], "keyPoints": ["point 1", "point 2"]}
-        Be concise. Respond only with valid JSON, no markdown, no explanation.
-        """
 }
