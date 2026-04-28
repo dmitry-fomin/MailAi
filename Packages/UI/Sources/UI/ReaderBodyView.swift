@@ -1,27 +1,31 @@
 import SwiftUI
 import Core
 
-/// Рендер тела письма. Plain — как есть; HTML — через безопасный санитайзер
-/// (без внешних ресурсов, без JS). Полноценный WKWebView с офлайн-политикой —
-/// задача более поздней фазы (см. docs/UI.md).
-///
-/// A6: скролл внутри reader обрабатывается нативным `NSScrollView`
-/// через `KeyboardScrollableReader`, что даёт Space (pageDown),
-/// Shift+Space (pageUp), стрелки и PageUp/PageDown.
+/// Рендер тела письма.
+/// Plain text — нативный SwiftUI Text.
+/// HTML — WKWebView через MessageWebView с кешем, dark mode и quote-collapsing.
 public struct ReaderBodyView: View {
     public let messageBody: MessageBody
+    public let messageID: String
     public let attachments: [Attachment]
+    public let cacheManager: CacheManager
     public var onSaveAttachment: (Attachment) -> Void
     @Binding public var isFocused: Bool
+    @State private var processedEmail: ProcessedEmail?
+    @State private var showImages: Bool = false
 
     public init(
         body: MessageBody,
+        messageID: String,
         attachments: [Attachment] = [],
+        cacheManager: CacheManager,
         onSaveAttachment: @escaping (Attachment) -> Void = { _ in },
         isFocused: Binding<Bool> = .constant(false)
     ) {
         self.messageBody = body
+        self.messageID = messageID
         self.attachments = attachments
+        self.cacheManager = cacheManager
         self.onSaveAttachment = onSaveAttachment
         self._isFocused = isFocused
     }
@@ -32,8 +36,7 @@ public struct ReaderBodyView: View {
                 content
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if !attachments.isEmpty {
-                    Divider()
-                        .padding(.top, 8)
+                    Divider().padding(.top, 8)
                     AttachmentListView(
                         attachments: attachments,
                         onSaveAs: { onSaveAttachment($0) }
@@ -42,6 +45,7 @@ public struct ReaderBodyView: View {
             }
             .padding(16)
         }
+        .task(id: messageID) { await loadHTML() }
     }
 
     @ViewBuilder private var content: some View {
@@ -50,63 +54,48 @@ public struct ReaderBodyView: View {
             Text(text)
                 .font(.body)
                 .textSelection(.enabled)
-        case .html(let html):
-            Text(HTMLSanitizer.plainText(from: html))
-                .font(.body)
-                .textSelection(.enabled)
+        case .html:
+            if let email = processedEmail {
+                VStack(alignment: .leading, spacing: 4) {
+                    if email.hasExternalImages && !showImages {
+                        Button("Показать изображения") {
+                            showImages = true
+                            Task { await loadHTML() }
+                        }
+                        .font(.caption)
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                    }
+                    MessageWebView(
+                        processedEmail: email,
+                        messageID: messageID,
+                        cacheManager: cacheManager
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 200)
+                }
+            } else {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 100)
+            }
         }
     }
-}
 
-/// Минимальный санитайзер HTML: вырезает теги и скрипты, декодирует
-/// базовые HTML-сущности. Никогда не исполняет код и не тянет ресурсы.
-public enum HTMLSanitizer {
-    public static func plainText(from html: String) -> String {
-        var text = html
-        text = removeBlocks(text, tag: "script")
-        text = removeBlocks(text, tag: "style")
-        text = stripTags(text)
-        text = decodeEntities(text)
-        return collapseWhitespace(text)
-    }
+    private func loadHTML() async {
+        guard case .html(let rawHTML) = messageBody.content else { return }
+        let blockImages = !showImages && UserDefaults.standard.bool(forKey: "blockExternalImages")
 
-    private static func removeBlocks(_ input: String, tag: String) -> String {
-        var out = input
-        while let openRange = out.range(of: "<\(tag)", options: .caseInsensitive),
-              let closeRange = out.range(of: "</\(tag)>", options: .caseInsensitive, range: openRange.upperBound..<out.endIndex) {
-            out.removeSubrange(openRange.lowerBound..<closeRange.upperBound)
+        if !showImages, let cached = await cacheManager.readBody(messageID: messageID) {
+            processedEmail = ProcessedEmail(
+                html: cached,
+                hasDarkModeSupport: cached.contains("prefers-color-scheme"),
+                hasExternalImages: cached.range(of: #"src\s*=\s*["']https?://"#, options: .regularExpression) != nil
+            )
+            return
         }
-        return out
-    }
 
-    private static func stripTags(_ input: String) -> String {
-        var out = ""
-        out.reserveCapacity(input.count)
-        var insideTag = false
-        for ch in input {
-            if ch == "<" { insideTag = true; continue }
-            if ch == ">" { insideTag = false; out.append(" "); continue }
-            if !insideTag { out.append(ch) }
+        let email = await HTMLPreprocessor().process(rawHTML, blockExternalImages: blockImages)
+        if !showImages {
+            await cacheManager.writeBody(messageID: messageID, processedHTML: email.html)
         }
-        return out
-    }
-
-    private static func decodeEntities(_ input: String) -> String {
-        var out = input
-        let map: [(String, String)] = [
-            ("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"),
-            ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'")
-        ]
-        for (from, to) in map {
-            out = out.replacingOccurrences(of: from, with: to)
-        }
-        return out
-    }
-
-    private static func collapseWhitespace(_ input: String) -> String {
-        let lines = input.split(whereSeparator: { $0.isNewline }).map { line in
-            line.split(whereSeparator: { $0 == " " || $0 == "\t" }).joined(separator: " ")
-        }
-        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        processedEmail = email
     }
 }

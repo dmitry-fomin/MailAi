@@ -59,6 +59,8 @@ public struct AccountWindowScene: View {
     /// Текущий запрос на открытие окна Compose. nil — sheet не показан.
     @State private var composeRequest: ComposeRequest?
 
+    private let cacheManager = CacheManager()
+
     public enum FocusZone: Hashable {
         case sidebar
         case list
@@ -523,6 +525,8 @@ public struct AccountWindowScene: View {
                             content: .plain(translation.text),
                             attachments: body.attachments
                         ),
+                        messageID: body.messageID,
+                        cacheManager: cacheManager,
                         onSaveAttachment: { att in saveAttachment(att) },
                         isFocused: Binding(
                             get: { focus == .reader },
@@ -532,6 +536,8 @@ public struct AccountWindowScene: View {
                 } else {
                     ReaderBodyView(
                         body: body,
+                        messageID: body.messageID,
+                        cacheManager: cacheManager,
                         onSaveAttachment: { att in saveAttachment(att) },
                         isFocused: Binding(
                             get: { focus == .reader },
