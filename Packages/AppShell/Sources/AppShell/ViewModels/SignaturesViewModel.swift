@@ -6,16 +6,22 @@ import Storage
 ///
 /// Управляет списком подписей: загрузка, добавление, удаление,
 /// сохранение выбранной записи. Все мутации — через `SignaturesRepository`.
+///
+/// MailAi-8uz8: поддерживает per-account фильтрацию и выбор подписи
+/// по умолчанию, привязанной к конкретному аккаунту.
 @MainActor
 public final class SignaturesViewModel: ObservableObject {
 
     // MARK: - Published state
 
-    /// Полный список подписей.
+    /// Полный список подписей (или подписей для выбранного аккаунта).
     @Published public private(set) var signatures: [Signature] = []
 
     /// Идентификатор выбранной подписи (выделена в левом списке).
     @Published public var selectedID: Signature.ID?
+
+    /// Текущий фильтр по аккаунту. nil — показываем все подписи.
+    @Published public var filterAccountID: Account.ID?
 
     // MARK: - Dependencies
 
@@ -37,10 +43,17 @@ public final class SignaturesViewModel: ObservableObject {
 
     // MARK: - Load
 
-    /// Загружает все подписи из базы и обновляет список.
+    /// Загружает подписи из базы.
+    ///
+    /// Если `filterAccountID` задан — загружает подписи для этого аккаунта
+    /// (привязанные + глобальные). Иначе — все.
     public func load() async {
         do {
-            signatures = try await repository.all()
+            if let accountID = filterAccountID {
+                signatures = try await repository.signatures(for: accountID)
+            } else {
+                signatures = try await repository.all()
+            }
         } catch {
             // Не логируем тела подписей; ошибку БД показываем в консоли для отладки.
             print("[SignaturesViewModel] load error: \(error)")
@@ -50,11 +63,16 @@ public final class SignaturesViewModel: ObservableObject {
     // MARK: - Add
 
     /// Создаёт новую подпись с placeholder-именем и сразу выбирает её.
+    /// Если `filterAccountID` задан — подпись привязывается к этому аккаунту.
     public func add() async {
-        let newSig = Signature(name: "Без названия", body: "")
+        let newSig = Signature(
+            name: "Без названия",
+            body: "",
+            accountID: filterAccountID
+        )
         do {
             try await repository.upsert(newSig)
-            signatures = try await repository.all()
+            await reload()
             selectedID = newSig.id
         } catch {
             print("[SignaturesViewModel] add error: \(error)")
@@ -67,7 +85,7 @@ public final class SignaturesViewModel: ObservableObject {
     public func delete(_ id: Signature.ID) async {
         do {
             try await repository.delete(id: id)
-            signatures = try await repository.all()
+            await reload()
             if selectedID == id {
                 selectedID = signatures.first?.id
             }
@@ -81,23 +99,49 @@ public final class SignaturesViewModel: ObservableObject {
     /// Сохраняет изменения выбранной подписи.
     ///
     /// Если `isDefault == true` — вызывает `setDefault`, чтобы снять флаг
-    /// со всех остальных записей.
-    public func save(name: String, body: String, isDefault: Bool) async {
+    /// со всех остальных записей в рамках того же аккаунта (или глобально).
+    public func save(name: String, body: String, isDefault: Bool, accountID: Account.ID? = nil) async {
         guard let id = selectedID else { return }
-        let updated = Signature(id: id, name: name, body: body, isDefault: isDefault)
+        let effectiveAccountID = accountID ?? selected?.accountID ?? filterAccountID
+        let updated = Signature(id: id, name: name, body: body, isDefault: isDefault,
+                                accountID: effectiveAccountID)
         do {
             try await repository.upsert(updated)
             if isDefault {
                 try await repository.setDefault(id: id)
             }
-            signatures = try await repository.all()
+            await reload()
         } catch {
             print("[SignaturesViewModel] save error: \(error)")
-            // БАГ-9: синхронизируем UI с БД даже при ошибке, чтобы не показывать
-            // устаревшие данные (например, upsert прошёл, но setDefault упал).
-            if let all = try? await repository.all() {
-                signatures = all
+            // Синхронизируем UI с БД даже при ошибке, чтобы не показывать устаревшие данные.
+            await reload()
+        }
+    }
+
+    // MARK: - Default Signature (MailAi-8uz8)
+
+    /// Возвращает подпись по умолчанию для указанного аккаунта.
+    /// Используется `ComposeViewModel` для автовставки подписи в новое письмо.
+    public func defaultSignature(for accountID: Account.ID) async -> Signature? {
+        do {
+            return try await repository.defaultSignature(for: accountID)
+        } catch {
+            print("[SignaturesViewModel] defaultSignature error: \(error)")
+            return nil
+        }
+    }
+
+    // MARK: - Private
+
+    private func reload() async {
+        do {
+            if let accountID = filterAccountID {
+                signatures = try await repository.signatures(for: accountID)
+            } else {
+                signatures = try await repository.all()
             }
+        } catch {
+            print("[SignaturesViewModel] reload error: \(error)")
         }
     }
 }

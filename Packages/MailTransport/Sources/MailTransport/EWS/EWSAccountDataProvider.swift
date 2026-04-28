@@ -178,6 +178,13 @@ public final class EWSAccountDataProvider: AccountDataProvider, MailActionsProvi
         await folderCache.removeItem(messageID: messageID)
     }
 
+    /// Восстанавливает письма из Trash в указанную папку (MailAi-9fi0).
+    public func restore(messageIDs: [Message.ID], to targetMailboxID: Mailbox.ID) async throws {
+        for messageID in messageIDs {
+            try await moveToMailbox(messageID: messageID, targetMailboxID: targetMailboxID)
+        }
+    }
+
     // MARK: - Store item refs for body/actions
 
     func cacheItemRefs(_ items: [EWSItem], in mailboxID: Mailbox.ID) async {

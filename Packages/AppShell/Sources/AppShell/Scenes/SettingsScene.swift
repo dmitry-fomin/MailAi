@@ -70,7 +70,7 @@ public struct SettingsScene: View {
                 .tabItem { Label("Аккаунты", systemImage: "person.crop.circle") }
             NotificationsSettingsView()
                 .tabItem { Label("Уведомления", systemImage: "bell") }
-            SignaturesSettingsTab(databasePool: databasePool)
+            SignaturesSettingsTab(databasePool: databasePool, registry: registry)
                 .tabItem { Label("Подписи", systemImage: "signature") }
             RulesSettingsTab(registry: registry)
                 .tabItem { Label("Правила", systemImage: "line.3.horizontal.decrease.circle") }
@@ -350,19 +350,18 @@ private struct NotificationsSettingsView: View {
     }
 }
 
-// MARK: - Signatures Tab
+// MARK: - Signatures Tab (MailAi-8uz8)
 
 private struct SignaturesSettingsTab: View {
     let databasePool: DatabasePool?
+    let registry: AccountRegistry?
+
+    @State private var selectedAccountID: Account.ID?
 
     var body: some View {
         Group {
             if let pool = databasePool {
-                SignaturesSettingsView(
-                    viewModel: SignaturesViewModel(
-                        repository: SignaturesRepository(pool: pool)
-                    )
-                )
+                signaturesContent(pool: pool)
             } else {
                 Form {
                     Section("Подписи") {
@@ -375,6 +374,41 @@ private struct SignaturesSettingsTab: View {
             }
         }
     }
+
+    @ViewBuilder
+    private func signaturesContent(pool: DatabasePool) -> some View {
+        VStack(spacing: 0) {
+            // Per-account фильтр (если есть несколько аккаунтов)
+            if let registry, registry.accounts.count > 0 {
+                HStack {
+                    Text("Аккаунт:")
+                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                    Picker("", selection: $selectedAccountID) {
+                        Text("Все").tag(Account.ID?.none)
+                        ForEach(registry.accounts, id: \.id) { account in
+                            Text(account.email).tag(Optional(account.id))
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                Divider()
+            }
+
+            SignaturesSettingsView(
+                viewModel: SignaturesViewModel(
+                    repository: SignaturesRepository(pool: pool)
+                ),
+                filterAccountID: selectedAccountID,
+                accounts: registry?.accounts ?? []
+            )
+            .id(selectedAccountID) // пересоздаём VM при смене фильтра
+        }
+    }
 }
 
 private struct SignaturesSettingsView: View {
@@ -383,30 +417,47 @@ private struct SignaturesSettingsView: View {
     @State private var editingName: String = ""
     @State private var editingBody: String = ""
     @State private var editingIsDefault: Bool = false
+    @State private var editingAccountID: Account.ID?
 
-    init(viewModel: SignaturesViewModel) {
+    let filterAccountID: Account.ID?
+    let accounts: [Account]
+
+    init(viewModel: SignaturesViewModel, filterAccountID: Account.ID? = nil, accounts: [Account] = []) {
         _viewModel = StateObject(wrappedValue: viewModel)
+        self.filterAccountID = filterAccountID
+        self.accounts = accounts
+    }
+
+    @ViewBuilder
+    private var signaturesListView: some View {
+        List(selection: Binding<Signature.ID?>(
+            get: { viewModel.selectedID },
+            set: { viewModel.selectedID = $0 }
+        )) {
+            ForEach(viewModel.signatures) { sig in
+                HStack {
+                    Text(sig.name)
+                        .lineLimit(1)
+                    Spacer()
+                    if sig.isDefault {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Color.accentColor)
+                            .font(.caption)
+                            .help("Подпись по умолчанию")
+                    }
+                }
+                .tag(sig.id)
+            }
+        }
+        .listStyle(.sidebar)
+        .frame(minWidth: 160, idealWidth: 180)
     }
 
     var body: some View {
         HSplitView {
             // MARK: Left panel — list
             VStack(spacing: 0) {
-                List(viewModel.signatures, selection: $viewModel.selectedID) { sig in
-                    HStack {
-                        Text(sig.name)
-                            .lineLimit(1)
-                        Spacer()
-                        if sig.isDefault {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.accentColor)
-                                .font(.caption)
-                                .help("Подпись по умолчанию")
-                        }
-                    }
-                }
-                .listStyle(.sidebar)
-                .frame(minWidth: 160, idealWidth: 180)
+                signaturesListView
 
                 Divider()
 
@@ -463,13 +514,26 @@ private struct SignaturesSettingsView: View {
                         Toggle("Использовать по умолчанию", isOn: $editingIsDefault)
                             .toggleStyle(.checkbox)
 
+                        // MailAi-8uz8: привязка подписи к аккаунту
+                        if !accounts.isEmpty {
+                            Picker("Аккаунт", selection: $editingAccountID) {
+                                Text("Все аккаунты (глобальная)").tag(Account.ID?.none)
+                                ForEach(accounts, id: \.id) { account in
+                                    Text(account.email).tag(Optional(account.id))
+                                }
+                            }
+                            .pickerStyle(.menu)
+                        }
+
                         HStack {
                             Spacer()
                             Button("Сохранить") {
                                 let name = editingName
                                 let body = editingBody
                                 let isDefault = editingIsDefault
-                                Task { await viewModel.save(name: name, body: body, isDefault: isDefault) }
+                                let accountID = editingAccountID
+                                Task { await viewModel.save(name: name, body: body, isDefault: isDefault,
+                                                           accountID: accountID) }
                             }
                             .buttonStyle(.borderedProminent)
                             .disabled(editingName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -481,12 +545,14 @@ private struct SignaturesSettingsView: View {
                         editingName = selected.name
                         editingBody = selected.body
                         editingIsDefault = selected.isDefault
+                        editingAccountID = selected.accountID
                     }
                     .onChange(of: viewModel.selectedID) { _, _ in
                         if let s = viewModel.selected {
                             editingName = s.name
                             editingBody = s.body
                             editingIsDefault = s.isDefault
+                            editingAccountID = s.accountID
                         }
                     }
                 } else {
@@ -502,7 +568,14 @@ private struct SignaturesSettingsView: View {
             }
             .frame(minWidth: 280)
         }
-        .task { await viewModel.load() }
+        .task {
+            viewModel.filterAccountID = filterAccountID
+            await viewModel.load()
+        }
+        .onChange(of: filterAccountID) { _, newID in
+            viewModel.filterAccountID = newID
+            Task { await viewModel.load() }
+        }
     }
 }
 

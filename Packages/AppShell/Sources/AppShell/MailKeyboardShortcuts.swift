@@ -75,10 +75,6 @@ public struct MailKeyboardShortcutsModifier: ViewModifier {
             Button("Delete") { onDelete() }
                 .keyboardShortcut(.delete, modifiers: [])
 
-            // Backspace — удалить (alias)
-            Button("Delete (Backspace)") { onDelete() }
-                .keyboardShortcut(.deleteBackward, modifiers: [])
-
             // Space — следующее непрочитанное
             Button("Next Unread") { onNextUnread() }
                 .keyboardShortcut(" ", modifiers: [])

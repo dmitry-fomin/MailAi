@@ -432,6 +432,14 @@ public actor LiveAccountDataProvider {
         try await store.delete(messageIDs: [messageID])
     }
 
+    /// Восстанавливает письма из Trash в указанную папку (MailAi-9fi0).
+    /// Использует moveToMailbox для каждого письма.
+    public func restore(messageIDs: [Message.ID], to targetMailboxID: Mailbox.ID) async throws {
+        for messageID in messageIDs {
+            try await moveToMailbox(messageID: messageID, targetMailboxID: targetMailboxID)
+        }
+    }
+
     // MARK: - AI-7: серверная синхронизация Important/Unimportant
 
     /// Кэш состояния серверных папок: были ли они уже созданы/проверены в

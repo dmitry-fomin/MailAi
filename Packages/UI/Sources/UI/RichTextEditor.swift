@@ -252,8 +252,8 @@ public struct RichTextEditorContainer: View {
             } else {
                 traits.insert(trait)
             }
-            if let descriptor = font.fontDescriptor.withSymbolicTraits(traits),
-               let newFont = NSFont(descriptor: descriptor, size: font.pointSize) {
+            let descriptor = font.fontDescriptor.withSymbolicTraits(traits)
+            if let newFont = NSFont(descriptor: descriptor, size: font.pointSize) {
                 storage.addAttribute(.font, value: newFont, range: subrange)
             }
         }
