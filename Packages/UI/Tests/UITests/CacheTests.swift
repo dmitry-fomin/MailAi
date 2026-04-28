@@ -70,4 +70,47 @@ final class MessageBodyCacheTests: XCTestCase {
         XCTAssertEqual(files[0].messageIDHash, expectedHash)
     }
 }
+final class AttachmentCacheStoreTests: XCTestCase {
+    var store: AttachmentCacheStore!
+    var tmpDir: URL!
+
+    override func setUp() async throws {
+        tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        store = AttachmentCacheStore(cacheDir: tmpDir)
+    }
+
+    override func tearDown() async throws {
+        try? FileManager.default.removeItem(at: tmpDir)
+    }
+
+    func testReadReturnNilForMiss() async throws {
+        let result = await store.read(messageID: "msg-1", contentID: "img001")
+        XCTAssertNil(result)
+    }
+
+    func testWriteThenRead() async throws {
+        let data = Data([0x89, 0x50, 0x4E, 0x47]) // PNG header
+        await store.write(messageID: "msg-1", contentID: "img001", data: data, mimeType: "image/png")
+        let result = await store.read(messageID: "msg-1", contentID: "img001")
+        XCTAssertEqual(result?.0, data)
+        XCTAssertEqual(result?.1, "image/png")
+    }
+
+    func testClearAllRemovesFiles() async throws {
+        let data = Data([0x01, 0x02])
+        await store.write(messageID: "msg-1", contentID: "img001", data: data, mimeType: "image/jpeg")
+        _ = await store.clearAll()
+        let result = await store.read(messageID: "msg-1", contentID: "img001")
+        XCTAssertNil(result)
+    }
+
+    func testMessageIDHashStoredInMeta() async throws {
+        let data = Data([0x01])
+        await store.write(messageID: "msg-abc", contentID: "img001", data: data, mimeType: "image/png")
+        let files = await store.allFiles()
+        XCTAssertTrue(files.contains { $0.messageIDHash == AttachmentCacheStore.sha256("msg-abc") })
+    }
+}
 #endif
