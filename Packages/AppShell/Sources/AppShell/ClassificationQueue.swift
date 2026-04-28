@@ -113,6 +113,32 @@ public actor ClassificationQueue {
                  failed: failed.count, inFlight: inFlight.count)
     }
 
+    /// Подписывается на снапшоты очереди. Async-версия: observer регистрируется
+    /// атомарно внутри актора до возврата stream — race condition отсутствует.
+    ///
+    /// Предпочтительна перед `observe()` при наличии async call site.
+    public func observeAsync() -> AsyncStream<Snapshot> {
+        let id = UUID()
+        return AsyncStream { continuation in
+            self.continuations[id] = continuation
+            // Немедленно отправляем текущий снапшот — подписчик не пропустит
+            // состояние, которое было до подписки.
+            continuation.yield(self.snapshot())
+            continuation.onTermination = { _ in
+                Task { await self.removeObserver(id: id) }
+            }
+        }
+    }
+
+    /// Подписывается на снапшоты очереди. Nonisolated — не требует await на call site.
+    ///
+    /// Известное ограничение (MailAi-tze): между созданием stream и регистрацией
+    /// observer в акторе существует короткое окно, в котором `broadcast()` может
+    /// не доставить обновления. Компенсируется тем, что `addObserver` немедленно
+    /// отправляет текущий снапшот — подписчик получит актуальное состояние,
+    /// но может пропустить промежуточные переходы.
+    ///
+    /// Для устранения race condition используйте `observeAsync()` из async-контекста.
     public nonisolated func observe() -> AsyncStream<Snapshot> {
         AsyncStream { continuation in
             let id = UUID()
@@ -125,6 +151,8 @@ public actor ClassificationQueue {
 
     private func addObserver(id: UUID, continuation: AsyncStream<Snapshot>.Continuation) {
         continuations[id] = continuation
+        // Немедленно отправляем текущий снапшот — компенсирует возможное окно
+        // до регистрации: подписчик видит актуальное состояние на момент подписки.
         continuation.yield(snapshot())
     }
 

@@ -21,10 +21,15 @@ public final class ClassificationProgressViewModel: ObservableObject {
 
     /// Подписаться на снапшоты очереди. Поддерживает безопасную замену
     /// очереди (старая подписка отменяется).
+    ///
+    /// Использует `observeAsync()` — регистрация observer происходит атомарно
+    /// внутри актора, race condition отсутствует (исправлен MailAi-tze).
     public func bind(to queue: ClassificationQueue) {
         observerTask?.cancel()
-        let stream = queue.observe()
         observerTask = Task { [weak self] in
+            // observeAsync() вызывается изолированно внутри актора ClassificationQueue —
+            // observer регистрируется до первого await, без race condition.
+            let stream = await queue.observeAsync()
             for await snap in stream {
                 if Task.isCancelled { return }
                 await MainActor.run {

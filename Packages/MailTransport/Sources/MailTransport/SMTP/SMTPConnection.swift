@@ -32,8 +32,6 @@ public final class SMTPConnection: @unchecked Sendable {
     // которые вызываются последовательно в рамках withOpen-замыкания.
     nonisolated(unsafe) private var iterator: NIOAsyncChannelInboundStream<IMAPLine>.AsyncIterator
     private let outbound: NIOAsyncChannelOutboundWriter<IMAPLine>
-    /// Underlying NIO channel — нужен для добавления TLS-handler при STARTTLS.
-    private let underlyingChannel: NIOAsyncChannel<IMAPLine, IMAPLine>
 
     /// Расширения сервера из EHLO-ответа.
     /// Мутируется только последовательно в ehlo() — в рамках инварианта серийного доступа.
@@ -44,6 +42,10 @@ public final class SMTPConnection: @unchecked Sendable {
     /// Подключается к SMTP-серверу, выполняет EHLO, STARTTLS (если нужно),
     /// AUTH — и передаёт готовое соединение в замыкание.
     /// Канал гарантированно закрыт после выхода.
+    ///
+    /// Для `.startTLS` безопасный двухэтапный upgrade выполняется в
+    /// `SMTPClientBootstrap.connect` ДО создания NIOAsyncChannel —
+    /// TLS handler никогда не добавляется в активный канал (исправлен MailAi-7ac).
     public static func withOpen<R>(
         endpoint: SMTPEndpoint,
         credentials: SMTPCredentials,
@@ -51,7 +53,7 @@ public final class SMTPConnection: @unchecked Sendable {
         connectTimeout: TimeAmount = .seconds(10),
         _ body: (SMTPConnection) async throws -> R
     ) async throws -> R {
-        // 1. TCP + (implicit TLS, если порт 465)
+        // 1. TCP + TLS/STARTTLS (bootstrap выполняет нужный upgrade заранее).
         let channel = try await SMTPClientBootstrap.connect(
             to: endpoint,
             eventLoopGroup: eventLoopGroup,
@@ -61,30 +63,23 @@ public final class SMTPConnection: @unchecked Sendable {
         return try await channel.executeThenClose { inbound, outbound in
             var iter = inbound.makeAsyncIterator()
 
-            // 2. Читаем greeting сервера (220 ...)
-            let greeting = try await readResponse(from: &iter)
-            guard greeting.code == 220 else {
-                throw SMTPError.unexpectedResponse(greeting.text)
+            // Для .plain и .tls читаем greeting здесь (для .startTLS greeting уже
+            // был прочитан в PlainSMTPNegotiator.negotiate() во время bootstrap).
+            if endpoint.security != .startTLS {
+                let greeting = try await readResponse(from: &iter)
+                guard greeting.code == 220 else {
+                    throw SMTPError.unexpectedResponse(greeting.text)
+                }
             }
 
-            let smtp = SMTPConnection(
-                iterator: iter,
-                outbound: outbound,
-                underlyingChannel: channel
-            )
+            let smtp = SMTPConnection(iterator: iter, outbound: outbound)
 
-            // 3. EHLO — определяем расширения (включая STARTTLS и AUTH механизмы)
+            // 2. EHLO — определяем расширения.
+            // Для .startTLS bootstrap уже выполнил первый EHLO; после TLS upgrade
+            // нужен повторный EHLO (сервер может опубликовать расширенный список).
             try await smtp.ehlo(hostname: endpoint.host)
 
-            // 4. STARTTLS, если подключение в режиме startTLS (порт 587)
-            if endpoint.security == .startTLS {
-                try await smtp.performStartTLS(hostname: endpoint.host)
-                // После TLS-upgrade нужно повторить EHLO — сервер может
-                // опубликовать другие capabilities поверх TLS.
-                try await smtp.ehlo(hostname: endpoint.host)
-            }
-
-            // 5. Аутентификация
+            // 3. Аутентификация.
             try await smtp.authenticate(credentials: credentials)
 
             return try await body(smtp)
@@ -93,12 +88,10 @@ public final class SMTPConnection: @unchecked Sendable {
 
     fileprivate init(
         iterator: NIOAsyncChannelInboundStream<IMAPLine>.AsyncIterator,
-        outbound: NIOAsyncChannelOutboundWriter<IMAPLine>,
-        underlyingChannel: NIOAsyncChannel<IMAPLine, IMAPLine>
+        outbound: NIOAsyncChannelOutboundWriter<IMAPLine>
     ) {
         self.iterator = iterator
         self.outbound = outbound
-        self.underlyingChannel = underlyingChannel
     }
 
     // MARK: - EHLO
@@ -128,38 +121,6 @@ public final class SMTPConnection: @unchecked Sendable {
         }
         // Первая строка EHLO тоже содержит домен сервера — не считаем capability.
         capabilities = caps
-    }
-
-    // MARK: - STARTTLS
-
-    /// Выполняет STARTTLS-upgrade: отправляет команду, получает 220,
-    /// затем добавляет TLS-handler в pipeline.
-    private func performStartTLS(hostname: String) async throws {
-        guard capabilities.contains("STARTTLS") else {
-            throw SMTPError.tls("Сервер не поддерживает STARTTLS")
-        }
-
-        try await sendCommand("STARTTLS")
-        let resp = try await readResponse()
-        guard resp.code == 220 else {
-            throw SMTPError.tls("STARTTLS отклонён: \(resp.code) \(resp.text)")
-        }
-
-        // ВАЖНО: добавление TLS handler в pipeline активного NIOAsyncChannel технически
-        // небезопасно — канал уже читается через AsyncIterator. Правильное решение —
-        // пересоздать bootstrap с TLS или использовать специальный STARTTLS-режим NIO.
-        // TODO(MailAi-7ac): рефакторинг bootstrap для безопасного STARTTLS.
-        // Текущая реализация работает на практике для последовательных вызовов,
-        // но формально нарушает контракт NIOAsyncChannel.
-        let sslContext = try NIOSSLContext(configuration: .makeClientConfiguration())
-        nonisolated(unsafe) let tlsHandler = try NIOSSLClientHandler(
-            context: sslContext,
-            serverHostname: hostname
-        )
-        let channel = underlyingChannel.channel
-        try await channel.eventLoop.submit {
-            try channel.pipeline.syncOperations.addHandler(tlsHandler, position: .first)
-        }.get()
     }
 
     // MARK: - Аутентификация
