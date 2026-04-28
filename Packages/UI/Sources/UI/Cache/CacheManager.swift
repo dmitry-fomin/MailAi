@@ -7,6 +7,10 @@ public actor CacheManager {
     private var limitBytes: Int
 
     public static let defaultLimitBytes = 500 * 1024 * 1024  // 500 МБ
+    public static let shared = CacheManager(
+        bodyCache: MessageBodyCache(),
+        attachmentCache: AttachmentCacheStore()
+    )
 
     public init(
         bodyCache: MessageBodyCache,
@@ -89,4 +93,34 @@ public actor CacheManager {
 
 private extension Int {
     var nonZero: Int? { self == 0 ? nil : self }
+}
+
+// MARK: - Settings ViewModel
+
+@MainActor
+public final class CacheSettingsViewModel: ObservableObject {
+    @Published public var formattedSize: String = "—"
+    @Published public var limitMB: Int
+
+    private let manager: CacheManager
+
+    public init(manager: CacheManager = .shared) {
+        self.manager = manager
+        self.limitMB = (UserDefaults.standard.integer(forKey: "cacheLimitBytes").nonZero
+            ?? CacheManager.defaultLimitBytes) / (1024 * 1024)
+    }
+
+    public func refresh() async {
+        formattedSize = await manager.formattedSize
+    }
+
+    public func clearCache() async {
+        await manager.clearAll()
+        await refresh()
+    }
+
+    public func updateLimit() {
+        let bytes = limitMB * 1024 * 1024
+        Task { await manager.setLimit(bytes: bytes) }
+    }
 }

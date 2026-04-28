@@ -4,6 +4,7 @@ import Secrets
 import Storage
 import AI
 import GRDB
+import UI
 
 /// Окно настроек приложения. Содержит вкладки "Общие", "Отфильтрованные",
 /// "Подписи" и "AI-pack" (ключ OpenRouter, модель, правила классификатора).
@@ -43,14 +44,53 @@ public struct SettingsScene: View {
 }
 
 private struct GeneralSettingsView: View {
+    @StateObject private var cacheVM = CacheSettingsViewModel()
+
     var body: some View {
         Form {
             Section("Аккаунты") {
                 Text("Управление аккаунтами — через первое окно (Welcome).")
                     .foregroundStyle(.secondary)
             }
+
+            Section("Кеш") {
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text("Письма и вложения")
+                        Text(cacheVM.formattedSize)
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                    }
+                    Spacer()
+                    Button("Очистить кеш", role: .destructive) {
+                        Task { await cacheVM.clearCache() }
+                    }
+                }
+                LabeledContent("Максимальный размер кеша") {
+                    Stepper(
+                        value: $cacheVM.limitMB,
+                        in: 50...10240,
+                        step: 50,
+                        onEditingChanged: { _ in cacheVM.updateLimit() }
+                    ) {
+                        Text("\(cacheVM.limitMB) МБ")
+                    }
+                }
+            }
+
+            Section("Приватность") {
+                Toggle("Блокировать внешние изображения",
+                       isOn: Binding(
+                           get: { UserDefaults.standard.bool(forKey: "blockExternalImages") },
+                           set: { UserDefaults.standard.set($0, forKey: "blockExternalImages") }
+                       ))
+                Text("Скрывает трекер-пиксели и внешние картинки. Кнопка «Показать изображения» позволяет разрешить для отдельного письма.")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            }
         }
         .formStyle(.grouped)
+        .task { await cacheVM.refresh() }
     }
 }
 

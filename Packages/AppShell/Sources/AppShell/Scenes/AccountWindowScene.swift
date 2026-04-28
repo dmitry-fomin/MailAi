@@ -59,7 +59,7 @@ public struct AccountWindowScene: View {
     /// Текущий запрос на открытие окна Compose. nil — sheet не показан.
     @State private var composeRequest: ComposeRequest?
 
-    private let cacheManager = CacheManager()
+    private let cacheManager = CacheManager.shared
 
     public enum FocusZone: Hashable {
         case sidebar
