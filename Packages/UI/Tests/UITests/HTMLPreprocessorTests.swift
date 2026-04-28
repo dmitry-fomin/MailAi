@@ -100,6 +100,13 @@ final class HTMLPreprocessorTests: XCTestCase {
 
     // MARK: - HTML structure
 
+    func testInjectsMetaInHtmlWithoutHead() async {
+        let html = "<html><body><p>Hello</p></body></html>"
+        let result = await HTMLPreprocessor().process(html, blockExternalImages: false)
+        XCTAssertTrue(result.html.contains("Content-Security-Policy"), "CSP should be injected even when <head> is missing")
+        XCTAssertTrue(result.html.contains("viewport"), "Viewport should be injected even when <head> is missing")
+    }
+
     func testEnsuresHtmlHeadBodyStructure() async {
         let result = await HTMLPreprocessor().process("<p>Hello</p>", blockExternalImages: false)
         XCTAssertTrue(result.html.hasPrefix("<!DOCTYPE html>") || result.html.contains("<html"))

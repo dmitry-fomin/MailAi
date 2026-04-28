@@ -33,15 +33,22 @@ public actor HTMLPreprocessor {
 
     private func ensureStructure(_ html: String) -> String {
         let lower = html.lowercased()
-        if lower.contains("<html") {
-            return html
+        guard lower.contains("<html") else {
+            return """
+            <!DOCTYPE html>
+            <html><head></head><body>
+            \(html)
+            </body></html>
+            """
         }
-        return """
-        <!DOCTYPE html>
-        <html><head></head><body>
-        \(html)
-        </body></html>
-        """
+        // Если <html> есть, но <head> нет — вставляем <head></head>
+        if !lower.contains("<head") {
+            if let range = html.range(of: #"<html[^>]*>"#, options: [.regularExpression, .caseInsensitive]) {
+                let afterHtml = html[range.upperBound...]
+                return String(html[..<range.upperBound]) + "<head></head>" + String(afterHtml)
+            }
+        }
+        return html
     }
 
     // MARK: - Head injection
@@ -87,7 +94,6 @@ public actor HTMLPreprocessor {
         guard let openRange = html.range(of: openPattern, options: [.regularExpression, .caseInsensitive]) else {
             return html
         }
-        let openTag = String(html[openRange])
         let afterOpen = html[openRange.upperBound...]
         let closeStr = "</\(closeTag)>"
         guard let closeRange = afterOpen.range(of: closeStr, options: .caseInsensitive) else {
