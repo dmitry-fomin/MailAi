@@ -210,7 +210,7 @@ public final class MessageExporter {
         let dateString = mboxDate(message.date)
         let fromLine = "From \(fromAddress) \(dateString)\r\n"
 
-        var emlData = buildEML(message: message, body: body)
+        let emlData = buildEML(message: message, body: body)
 
         // mboxrd: экранируем строки ^"From " в теле
         var emlString = String(data: emlData, encoding: .utf8) ?? ""

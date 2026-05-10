@@ -186,10 +186,12 @@ public actor SenderProfileStore {
                 """, arguments: [email])
 
             var wordCount: [String: Int] = [:]
-            let stopWords: Set<String> = ["re:", "fwd:", "fw:", "the", "a", "an", "in", "on",
-                                          "at", "to", "for", "of", "and", "or", "is", "are",
-                                          "was", "has", "have", "with", "от", "для", "по", "на",
-                                          "из", "и", "в", "с", "к", "о", "не", "что", "это"]
+            let stopWords: Set<String> = [
+                "re:", "fwd:", "fw:", "the", "a", "an", "in", "on",
+                "at", "to", "for", "of", "and", "or", "is", "are",
+                "was", "has", "have", "with", "от", "для", "по", "на",
+                "из", "и", "в", "с", "к", "о", "не", "что", "это"
+            ]
 
             for row in rows {
                 let subject: String = row["subject"] ?? ""

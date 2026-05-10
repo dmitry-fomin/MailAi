@@ -38,9 +38,11 @@ public struct SidebarView: View {
         List(selection: Binding(
             get: { viewModel.selectedItemID },
             set: { newValue in
-                viewModel.selectedItemID = newValue
-                if let newValue, let item = viewModel.item(for: newValue) {
-                    onSelect(item)
+                Task { @MainActor in
+                    viewModel.selectedItemID = newValue
+                    if let newValue, let item = viewModel.item(for: newValue) {
+                        onSelect(item)
+                    }
                 }
             }
         )) {

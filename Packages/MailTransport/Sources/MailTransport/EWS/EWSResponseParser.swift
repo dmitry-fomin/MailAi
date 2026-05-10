@@ -77,7 +77,7 @@ public enum EWSResponseParser {
     /// Один экземпляр на весь парсер — ISO8601DateFormatter создание дорогостоящее.
     /// nonisolated(unsafe): ISO8601DateFormatter не Sendable, но используется
     /// только для чтения (форматирование дат) — мутации состояния нет.
-    nonisolated(unsafe) private static let iso8601DateFormatter: ISO8601DateFormatter = ISO8601DateFormatter()
+    nonisolated(unsafe) private static let iso8601DateFormatter = ISO8601DateFormatter()
 
     private static func parseItem(_ el: XMLElement) -> EWSItem? {
         guard let itemIdEl = el.child(named: "ItemId"),

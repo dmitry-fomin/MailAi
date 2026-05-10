@@ -101,7 +101,7 @@ public actor Classifier {
             } else if ch == "\\" && inString {
                 escaped = true
             } else if ch == "\"" {
-                inString = !inString
+                inString.toggle()
             } else if !inString {
                 if ch == "{" { depth += 1 }
                 else if ch == "}" {

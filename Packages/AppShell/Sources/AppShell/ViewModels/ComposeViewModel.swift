@@ -71,27 +71,21 @@ public final class ComposeViewModel: ObservableObject {
 
     /// MIME-тип по расширению файла (простая эвристика).
     private func mimeType(for url: URL) -> String {
-        let ext = url.pathExtension.lowercased()
-        switch ext {
-        case "jpg", "jpeg": return "image/jpeg"
-        case "png": return "image/png"
-        case "gif": return "image/gif"
-        case "webp": return "image/webp"
-        case "pdf": return "application/pdf"
-        case "doc": return "application/msword"
-        case "docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        case "xls": return "application/vnd.ms-excel"
-        case "xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        case "ppt": return "application/vnd.ms-powerpoint"
-        case "pptx": return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-        case "zip": return "application/zip"
-        case "txt": return "text/plain"
-        case "html", "htm": return "text/html"
-        case "mp3": return "audio/mpeg"
-        case "mp4": return "video/mp4"
-        case "mov": return "video/quicktime"
-        default: return "application/octet-stream"
-        }
+        let table: [String: String] = [
+            "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "png": "image/png", "gif": "image/gif", "webp": "image/webp",
+            "pdf": "application/pdf",
+            "doc": "application/msword",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "xls": "application/vnd.ms-excel",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "ppt": "application/vnd.ms-powerpoint",
+            "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "zip": "application/zip", "txt": "text/plain",
+            "html": "text/html", "htm": "text/html",
+            "mp3": "audio/mpeg", "mp4": "video/mp4", "mov": "video/quicktime"
+        ]
+        return table[url.pathExtension.lowercased()] ?? "application/octet-stream"
     }
 
     // MARK: - Строковые алиасы (обратная совместимость)
@@ -410,7 +404,7 @@ public final class ComposeViewModel: ObservableObject {
             vm.toTokens = [fromAddress]
         }
         vm.subject = Self.reSubject(original.subject)
-        vm.body = vm.body + Self.quotedBody(original)
+        vm.body += Self.quotedBody(original)
         return vm
     }
 
@@ -437,7 +431,7 @@ public final class ComposeViewModel: ObservableObject {
             .map(\.address)
             .filter { $0.lowercased() != accountEmail.lowercased() }
         vm.subject = Self.reSubject(original.subject)
-        vm.body = vm.body + Self.quotedBody(original)
+        vm.body += Self.quotedBody(original)
         return vm
     }
 
@@ -458,7 +452,7 @@ public final class ComposeViewModel: ObservableObject {
             defaultSignatureBody: defaultSignatureBody
         )
         vm.subject = Self.fwdSubject(original.subject)
-        vm.body = vm.body + Self.quotedBody(original)
+        vm.body += Self.quotedBody(original)
         return vm
     }
 
@@ -472,7 +466,7 @@ public final class ComposeViewModel: ObservableObject {
         ccTokens = []
         bccTokens = []
         subject = Self.reSubject(original.subject)
-        body = body + Self.quotedBody(original)
+        body += Self.quotedBody(original)
     }
 
     /// Применяет режим «Ответить всем» к текущему экземпляру ViewModel.
@@ -485,7 +479,7 @@ public final class ComposeViewModel: ObservableObject {
             .filter { $0.lowercased() != accountEmail.lowercased() }
         bccTokens = []
         subject = Self.reSubject(original.subject)
-        body = body + Self.quotedBody(original)
+        body += Self.quotedBody(original)
     }
 
     /// Применяет режим «Переслать» к текущему экземпляру ViewModel.
@@ -494,7 +488,7 @@ public final class ComposeViewModel: ObservableObject {
         ccTokens = []
         bccTokens = []
         subject = Self.fwdSubject(original.subject)
-        body = body + Self.quotedBody(original)
+        body += Self.quotedBody(original)
     }
 
     // MARK: - Quote helpers

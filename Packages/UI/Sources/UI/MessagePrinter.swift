@@ -259,7 +259,7 @@ private final class PrintWebView: NSObject, WKNavigationDelegate {
     // MARK: - WKNavigationDelegate
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        let printInfo = NSPrintInfo.shared.copy() as! NSPrintInfo
+        guard let printInfo = NSPrintInfo.shared.copy() as? NSPrintInfo else { return }
         printInfo.topMargin = 36
         printInfo.bottomMargin = 36
         printInfo.leftMargin = 54
@@ -275,7 +275,7 @@ private final class PrintWebView: NSObject, WKNavigationDelegate {
         navigationDelegate = nil
     }
 
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
         // При ошибке загрузки просто освобождаем.
         navigationDelegate = nil
     }

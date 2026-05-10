@@ -34,21 +34,42 @@ public struct ReaderBodyView: View {
     }
 
     public var body: some View {
-        KeyboardScrollableReader(isFocused: $isFocused) {
-            VStack(alignment: .leading, spacing: 0) {
-                content
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if !attachments.isEmpty {
-                    Divider().padding(.top, 8)
-                    AttachmentListView(
-                        attachments: attachments,
-                        onSaveAs: { onSaveAttachment($0) }
-                    )
+        Group {
+            if case .html = messageBody.content {
+                htmlBody
+            } else {
+                KeyboardScrollableReader(isFocused: $isFocused) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        content
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        attachmentsView
+                    }
+                    .padding(16)
                 }
             }
-            .padding(16)
         }
         .task(id: messageID) { await loadHTML() }
+    }
+
+    // WKWebView обрабатывает скролл и клавиатуру (Space/стрелки) нативно,
+    // поэтому внешний KeyboardScrollableReader здесь не нужен.
+    @ViewBuilder private var htmlBody: some View {
+        VStack(spacing: 0) {
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            attachmentsView
+        }
+    }
+
+    @ViewBuilder private var attachmentsView: some View {
+        if !attachments.isEmpty {
+            Divider().padding(.top, 8)
+            AttachmentListView(
+                attachments: attachments,
+                onSaveAs: { onSaveAttachment($0) }
+            )
+            .padding(.horizontal, 16)
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -59,7 +80,7 @@ public struct ReaderBodyView: View {
                 .textSelection(.enabled)
         case .html:
             if let email = processedEmail {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 0) {
                     if email.hasExternalImages && !showImages {
                         Button("Показать изображения") {
                             showImages = true
@@ -68,6 +89,9 @@ public struct ReaderBodyView: View {
                         .font(.caption)
                         .buttonStyle(.borderless)
                         .foregroundStyle(.secondary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
+                        Divider()
                     }
                     MessageWebView(
                         processedEmail: email,
@@ -75,10 +99,10 @@ public struct ReaderBodyView: View {
                         cacheManager: cacheManager,
                         textZoom: textZoom
                     )
-                    .frame(maxWidth: .infinity, minHeight: 200)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
-                ProgressView().frame(maxWidth: .infinity, minHeight: 100)
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }

@@ -179,16 +179,15 @@ public enum SMTPClientBootstrap {
         // Шаг 2: ждём завершения STARTTLS-диалога (Greeting → EHLO → STARTTLS 220).
         try await negotiator.negotiate()
 
-        // Шаг 3: добавляем TLS handler перед line-framing handlers.
-        // Безопасно — NIOAsyncChannel ещё не создан, нет активного AsyncIterator.
-        let sslContext = try NIOSSLContext(configuration: .makeClientConfiguration())
-        let tlsHandler = try NIOSSLClientHandler(context: sslContext, serverHostname: endpoint.host)
-        try await plainChannel.pipeline.addHandler(tlsHandler, position: .first).get()
-
-        // Шаг 4: оборачиваем в NIOAsyncChannel поверх уже-TLS-канала.
-        // wrappingChannelSynchronously вызывается на event loop через submit.
+        // Шаги 3-4 выполняются на event loop одним блоком: TLS handler не пересекает
+        // Sendable-границу (NIOSSLClientHandler не Sendable), а NIOAsyncChannel создаётся
+        // сразу после установки TLS — нет активного AsyncIterator, безопасно.
+        let host = endpoint.host
         return try await plainChannel.eventLoop.submit {
-            try NIOAsyncChannel<IMAPLine, IMAPLine>(wrappingChannelSynchronously: plainChannel)
+            let sslContext = try NIOSSLContext(configuration: .makeClientConfiguration())
+            let tlsHandler = try NIOSSLClientHandler(context: sslContext, serverHostname: host)
+            try plainChannel.pipeline.syncOperations.addHandler(tlsHandler, position: .first)
+            return try NIOAsyncChannel<IMAPLine, IMAPLine>(wrappingChannelSynchronously: plainChannel)
         }.get()
     }
 

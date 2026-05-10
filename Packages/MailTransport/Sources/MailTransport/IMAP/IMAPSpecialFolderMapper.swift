@@ -17,12 +17,12 @@ public enum IMAPSpecialFolder: String, Sendable, CaseIterable, Equatable {
 /// Маппинг специальных папок для одного аккаунта.
 /// `nil` — папка не найдена на сервере.
 public struct IMAPSpecialFolderMap: Sendable, Equatable {
-    public var inbox:   String?
-    public var sent:    String?
-    public var drafts:  String?
-    public var trash:   String?
+    public var inbox: String?
+    public var sent: String?
+    public var drafts: String?
+    public var trash: String?
     public var archive: String?
-    public var spam:    String?
+    public var spam: String?
 
     public init(
         inbox: String? = nil,

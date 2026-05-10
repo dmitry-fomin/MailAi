@@ -133,7 +133,7 @@ public actor VIPList {
         return f
     }()
 
-    nonisolated(unsafe) private static let sqliteDateFormatter: DateFormatter = {
+    nonisolated private static let sqliteDateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd HH:mm:ss"

@@ -91,7 +91,7 @@ public struct RichTextToolbar: View {
     /// Передаётся через RichTextEditorContainer.
     public var applyFormat: (RichTextFormat) -> Void
 
-    @State private var fontSize: Double = Double(NSFont.systemFontSize)
+    @State private var fontSize = Double(NSFont.systemFontSize)
     @State private var selectedColor: Color = .primary
 
     public init(applyFormat: @escaping (RichTextFormat) -> Void) {

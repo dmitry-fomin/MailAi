@@ -33,6 +33,6 @@ public extension PromptEntry {
         PromptEntry(id: "nl_search", icon: "magnifyingglass", displayName: "NL-поиск"),
         PromptEntry(id: "follow_up", icon: "bell", displayName: "Follow-up"),
         PromptEntry(id: "attachment_summary", icon: "paperclip", displayName: "Вложения"),
-        PromptEntry(id: "meeting_parser", icon: "calendar", displayName: "Встречи"),
+        PromptEntry(id: "meeting_parser", icon: "calendar", displayName: "Встречи")
     ]
 }

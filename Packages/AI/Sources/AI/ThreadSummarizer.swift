@@ -64,7 +64,7 @@ public actor ThreadSummarizer: AISummarizer {
     private func buildUserPrompt(inputs: [MessageSummaryInput]) -> String {
         let dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime]
-        let messages = inputs.enumerated().map { (i, input) in
+        let messages = inputs.enumerated().map { i, input in
             """
             Message \(i + 1):
             From: \(input.from)

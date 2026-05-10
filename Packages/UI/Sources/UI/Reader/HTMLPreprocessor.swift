@@ -72,7 +72,7 @@ public actor HTMLPreprocessor {
             // height="0" или height="1"
             #"<img\b(?=[^>]*\bheight\s*=\s*["']?[01]["']?)[^>]*/?\s*>"#,
             // style с width:0 или width:1px или height:0
-            #"<img\b(?=[^>]*\bstyle\s*=\s*["'][^"']*(?:width\s*:\s*[01]|height\s*:\s*[01]))[^>]*/?\s*>"#,
+            #"<img\b(?=[^>]*\bstyle\s*=\s*["'][^"']*(?:width\s*:\s*[01]|height\s*:\s*[01]))[^>]*/?\s*>"#
         ]
         var result = html
         for pattern in patterns {
