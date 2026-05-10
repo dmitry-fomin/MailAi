@@ -9,13 +9,17 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../Core"),
-        .package(path: "../Storage")
+        .package(path: "../Storage"),
+        .package(url: "https://github.com/groue/GRDB.swift", from: "7.0.0")
     ],
     targets: [
         .target(
             name: "AI",
             dependencies: ["Core", "Storage"],
             path: "Sources/AI",
+            resources: [
+                .process("Prompts")
+            ],
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableUpcomingFeature("ExistentialAny")
@@ -37,7 +41,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "RuleEngineSmoke",
-            dependencies: ["AI", "Core", "Storage"],
+            dependencies: [
+                "AI", "Core", "Storage",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
             path: "Sources/RuleEngineSmoke",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),

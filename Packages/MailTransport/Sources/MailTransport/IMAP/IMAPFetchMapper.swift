@@ -76,31 +76,28 @@ public enum IMAPFetchMapper {
         return t != "text" && t != "multipart"
     }
 
-    private static let internalDateFormatter: DateFormatter = {
+    /// `DateFormatter` не является thread-safe при конкурентном вызове
+    /// `date(from:)`. Создаём экземпляр локально внутри каждого вызова —
+    /// это дороже static singleton, но безопасно при строгой конкурентности
+    /// без `@MainActor`. Инициализация DateFormatter лёгкая (< 1 мкс), поэтому
+    /// overhead пренебрежимо мал на фоне сетевых операций.
+    public static func parseInternalDate(_ s: String?) -> Date? {
+        guard let s else { return nil }
         // IMAP INTERNALDATE: "17-Apr-2026 10:30:42 +0300"
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "dd-MMM-yyyy HH:mm:ss Z"
         f.timeZone = TimeZone(secondsFromGMT: 0)
-        return f
-    }()
+        return f.date(from: s)
+    }
 
-    private static let rfc2822Formatter: DateFormatter = {
+    public static func parseRFC2822Date(_ s: String?) -> Date? {
+        guard let s else { return nil }
         // RFC2822: "Tue, 17 Apr 2026 10:30:42 +0300"
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "EEE, dd MMM yyyy HH:mm:ss Z"
         f.timeZone = TimeZone(secondsFromGMT: 0)
-        return f
-    }()
-
-    public static func parseInternalDate(_ s: String?) -> Date? {
-        guard let s else { return nil }
-        return internalDateFormatter.date(from: s)
-    }
-
-    public static func parseRFC2822Date(_ s: String?) -> Date? {
-        guard let s else { return nil }
-        return rfc2822Formatter.date(from: s)
+        return f.date(from: s)
     }
 }

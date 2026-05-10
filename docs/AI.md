@@ -1,6 +1,6 @@
 # Модуль: AI
 
-<!-- Статус: OpenRouterClient + Classifier actor + промпт ClassifyV1 + RuleEngine + SnippetExtractor + AI-pack settings (ключ/модель/правила) + drag-to-rule + серверная синхронизация Important/Unimportant реализованы. Summarizer / BulkDeleteAdvisor / Usage — план. -->
+<!-- Статус: OpenRouterClient + Classifier actor + промпт ClassifyV1 + RuleEngine + SnippetExtractor + AI-pack settings (ключ/модель/правила) + drag-to-rule + серверная синхронизация Important/Unimportant реализованы. PromptStore + 14 шаблонов + ThreadSummarizer + ActionExtractor реализованы. BulkDeleteAdvisor / Usage — план. -->
 
 ## Sidebar и UX (AI-5)
 
@@ -66,14 +66,81 @@ State: `AISettingsViewModel` (`@MainActor`, `ObservableObject`) +
 
 Клиент к OpenRouter, промпты и высокоуровневые сценарии: суммаризация переписки, оценка важности, классификация, поиск кандидатов на массовое удаление по запросу («удали все рассылки за полгода»).
 
+## Система промптов
+
+### Архитектура
+
+Промпты разделены на два слоя:
+
+1. **Инструкция** — хранится в `.md`-файле (`~/.mailai/prompts/{id}.md`). Описывает роль модели, контекст письма через плейсхолдеры (`{{FROM}}`, `{{SUBJECT}}`, `{{BODY}}` и т.д.) и критерии ответа. Пользователь может редактировать эти файлы напрямую.
+2. **Формат ответа** — хардкод в Swift-акторе (`private static let responseFormat`). Задаёт JSON-схему, которую должна вернуть модель. Парсится в типизированные структуры на стороне кода.
+
+Итоговый system-промпт = инструкция + `\n\n` + формат ответа.
+
+### PromptStore
+
+`PromptStore` (actor, `Sources/AI/PromptStore.swift`) управляет файлами промптов:
+
+| Метод | Назначение |
+|-------|-----------|
+| `initializeDefaults()` | При первом запуске копирует все 14 бандловых `.md` в `~/.mailai/prompts/`. Существующие файлы не трогает. |
+| `load(id:)` | Загружает файл из `~/.mailai/prompts/`; если отсутствует — fallback на бандл. |
+| `save(id:content:)` | Сохраняет пользовательский override. |
+| `reset(id:)` | Перезаписывает файл из бандла, откатывая пользовательские правки. |
+| `isCustom(id:)` | Возвращает `true`, если пользователь переопределил промпт. |
+
+`initializeDefaults()` вызывается в `AppDelegate.applicationDidFinishLaunching`. Сбой не крашит приложение (`try?`) — при следующем `load()` сработает bundle-fallback.
+
+### Реестр промптов
+
+`PromptEntry.allEntries` (`Sources/AI/PromptEntry.swift`) — источник истины о всех 14 промптах: id, SF Symbol, отображаемое имя.
+
+| id | Назначение | Плейсхолдеры |
+|----|-----------|--------------|
+| `classify` | Важное / неважное / рассылка | `{{FROM}}`, `{{SUBJECT}}`, `{{SNIPPET}}` |
+| `summarize` | Суммаризация треда | `{{THREAD}}` |
+| `extract_actions` | Дедлайны, задачи, встречи, ссылки | `{{BODY}}` |
+| `quick_reply` | 3 варианта ответа | `{{FROM}}`, `{{SUBJECT}}`, `{{BODY}}` |
+| `bulk_delete` | Кандидаты на удаление | `{{MESSAGES}}` |
+| `translate` | Перевод письма | `{{BODY}}`, `{{TARGET_LANGUAGE}}` |
+| `categorize` | Категория, язык, тон | `{{FROM}}`, `{{SUBJECT}}`, `{{SNIPPET}}` |
+| `snooze` | Когда вернуться к письму | `{{FROM}}`, `{{SUBJECT}}`, `{{DATE}}`, `{{BODY}}` |
+| `snippet` | Однострочный AI-превью (≤120 символов) | `{{FROM}}`, `{{SUBJECT}}`, `{{BODY}}` |
+| `draft_coach` | Правки черновика | `{{SUBJECT}}`, `{{DRAFT}}` |
+| `nl_search` | NL-запрос → параметры поиска | `{{QUERY}}` |
+| `follow_up` | Нужен ли follow-up и когда | `{{FROM}}`, `{{SUBJECT}}`, `{{DATE}}`, `{{BODY}}` |
+| `attachment_summary` | Суммаризация вложения | `{{FILENAME}}`, `{{CONTENT}}` |
+| `meeting_parser` | Детали встречи из письма | `{{SUBJECT}}`, `{{BODY}}` |
+
+### JSON-схемы ответов (в Swift-коде)
+
+| id | Схема |
+|----|-------|
+| `classify` | `{"importance": "important\|unimportant\|newsletter", "reason": "..."}` |
+| `summarize` | `{"summary": "...", "participants": [...], "keyPoints": [...]}` |
+| `extract_actions` | `[{"kind": "deadline\|task\|meeting\|link\|question", "text": "...", "dueDate": "ISO8601\|null"}]` |
+| `quick_reply` | `{"replies": [{"tone": "accept\|decline\|clarify", "text": "..."}]}` |
+| `bulk_delete` | `[{"messageId": "...", "reason": "..."}]` |
+| `translate` | `{"translation": "...", "detectedLanguage": "..."}` |
+| `categorize` | `{"category": "...", "language": "...", "tone": "..."}` |
+| `snooze` | `{"suggestAt": "ISO8601", "reason": "..."}` |
+| `snippet` | `{"snippet": "..."}` |
+| `draft_coach` | `{"suggestions": [{"field": "tone\|clarity\|cta\|grammar", "comment": "...", "suggestion": "..."}]}` |
+| `nl_search` | `{"from": "...", "to": "...", "after": "ISO8601\|null", "before": "ISO8601\|null", "keywords": [...], "subject": "...", "hasAttachment": bool\|null, "label": "..."}` |
+| `follow_up` | `{"needsFollowUp": bool, "suggestAt": "ISO8601\|null", "reason": "..."}` |
+| `attachment_summary` | `{"summary": "...", "keyPoints": [...], "actionItems": [...]}` |
+| `meeting_parser` | `{"title": "...", "date": "ISO8601\|null", "timezone": "...", "duration": "...", "location": "...", "organizer": "...", "attendees": [...], "agenda": [...], "dialIn": "..."}` |
+
 ## Ключевые сущности
 
 - `OpenRouterClient` — HTTP-клиент (URLSession + async/await), модель настраивается пользователем.
-- `Prompt` — шаблон с плейсхолдерами, версионируется.
-- `Summarizer` — сервис суммаризации треда.
-- `ImportanceRater` — оценка важности входящих (важное/неважное/рассылка).
-- `BulkDeleteAdvisor` — строит план удаления по запросу пользователя, возвращает список кандидатов для подтверждения.
-- `Usage` — счётчики токенов/стоимости на сессию.
+- `PromptStore` — actor, управляет `.md`-файлами промптов в `~/.mailai/prompts/`.
+- `PromptEntry` — метаданные промпта: id, иконка, имя; `allEntries` — реестр всех 14 промптов.
+- `ThreadSummarizer` — суммаризация треда, загружает инструкцию из `PromptStore`.
+- `ActionExtractor` — извлечение действий из письма, загружает инструкцию из `PromptStore`.
+- `ImportanceRater` — оценка важности входящих (важное/неважное/рассылка). _(план)_
+- `BulkDeleteAdvisor` — строит план удаления по запросу пользователя. _(план)_
+- `Usage` — счётчики токенов/стоимости на сессию. _(план)_
 
 ## Бизнес-логика
 

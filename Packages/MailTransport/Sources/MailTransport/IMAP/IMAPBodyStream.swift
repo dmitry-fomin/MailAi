@@ -130,15 +130,10 @@ extension IMAPConnection {
             let lineBytes = Array(line.raw.utf8)
             let consumed = lineBytes.count + 2  // + CRLF
             if consumed <= remaining {
-                // Полноценная линия внутри литерала: отдаём её + CRLF.
+                // Полноценная линия внутри литерала: восстанавливаем CRLF,
+                // который снял line-based decoder (он был частью тела письма).
                 var chunk = lineBytes
-                if consumed == remaining {
-                    // Последняя линия ровно — не добавляем CRLF (сервер его не прислал).
-                    // Но декодер всё равно снял CRLF, значит он был. Оставляем как есть.
-                    chunk.append(0x0D); chunk.append(0x0A)
-                } else {
-                    chunk.append(0x0D); chunk.append(0x0A)
-                }
+                chunk.append(0x0D); chunk.append(0x0A)
                 continuation.yield(ByteChunk(bytes: chunk))
                 remaining -= consumed
             } else {

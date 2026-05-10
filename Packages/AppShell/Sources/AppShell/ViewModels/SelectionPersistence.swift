@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Core
 
 /// A8: персистентный выбор «последней открытой папки» по аккаунту. Хранится
@@ -43,24 +44,34 @@ public struct DefaultsSelectionPersistence: SelectionPersistence, @unchecked Sen
 }
 
 public struct InMemorySelectionPersistence: SelectionPersistence {
-    // Actor-свободная ref-семантика через NSMutableDictionary — для тестов
-    // достаточно, поскольку SwiftUI-слой пишет строго на MainActor.
+    // БАГ-10: защищаем values через OSAllocatedUnfairLock, чтобы убрать
+    // @unchecked Sendable без реальной синхронизации.
     private final class Storage: @unchecked Sendable {
-        var values: [Account.ID: Mailbox.ID] = [:]
+        private let lock = OSAllocatedUnfairLock<[Account.ID: Mailbox.ID]>(initialState: [:])
+
+        func get(for accountID: Account.ID) -> Mailbox.ID? {
+            lock.withLock { $0[accountID] }
+        }
+
+        func set(_ mailbox: Mailbox.ID?, for accountID: Account.ID) {
+            lock.withLock { values in
+                if let mailbox {
+                    values[accountID] = mailbox
+                } else {
+                    values.removeValue(forKey: accountID)
+                }
+            }
+        }
     }
     private let storage = Storage()
 
     public init() {}
 
     public func selectedMailbox(for accountID: Account.ID) -> Mailbox.ID? {
-        storage.values[accountID]
+        storage.get(for: accountID)
     }
 
     public func setSelectedMailbox(_ mailbox: Mailbox.ID?, for accountID: Account.ID) {
-        if let mailbox {
-            storage.values[accountID] = mailbox
-        } else {
-            storage.values.removeValue(forKey: accountID)
-        }
+        storage.set(mailbox, for: accountID)
     }
 }

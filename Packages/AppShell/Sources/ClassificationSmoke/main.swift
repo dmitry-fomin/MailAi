@@ -1,6 +1,13 @@
 import Foundation
 import AppShell
 
+private actor Box<T: Sendable> {
+    var value: T
+    init(_ value: T) { self.value = value }
+    func set(_ newValue: T) { value = newValue }
+    func mutate(_ f: (inout T) -> Void) { f(&value) }
+}
+
 /// Smoke test для ClassificationQueue: батчинг, retry при 429, permanent fail.
 @main
 enum ClassificationSmokeRunner {
@@ -27,16 +34,17 @@ enum ClassificationSmokeRunner {
             let ids = (0..<7).map { "msg-\($0)" }
             await queue.enqueue(ids)
 
-            var batches: [[String]] = []
+            let batchesBox = Box<[[String]]>([])
 
             await queue.processBatched { batch in
-                batches.append(batch)
+                await batchesBox.mutate { $0.append(batch) }
                 // Все успешны.
                 return batch.reduce(into: [String: ClassificationError?]()) { result, id in
                     result[id] = nil
                 }
             }
 
+            let batches = await batchesBox.value
             check("Batching: 3 батча для 7 элементов (3+3+1)", batches.count == 3)
             check("Batching: 1-й батч = 3 элемента", batches[0].count == 3)
             check("Batching: 2-й батч = 3 элемента", batches[1].count == 3)
@@ -60,22 +68,24 @@ enum ClassificationSmokeRunner {
             let ids = ["ok-1", "ok-2", "retry-me", "ok-3"]
             await queue.enqueue(ids)
 
-            var attempt = 0
+            let attemptBox = Box<Int>(0)
 
             await queue.processBatched { batch in
+                let currentAttempt = await attemptBox.value
                 var results: [String: ClassificationError?] = [:]
                 for id in batch {
-                    if id == "retry-me" && attempt < 2 {
+                    if id == "retry-me" && currentAttempt < 2 {
                         // Первые 2 попытки — rate limited.
                         results[id] = .rateLimited(retryAfter: nil)
                     } else {
                         results[id] = nil
                     }
                 }
-                attempt += 1
+                await attemptBox.mutate { $0 += 1 }
                 return results
             }
 
+            let attempt = await attemptBox.value
             let snap = await queue.snapshot()
             check("Retry: очередь пуста", snap.isIdle)
             check("Retry: 0 failed (retry-me в конце прошёл)", snap.failed == 0)
@@ -94,10 +104,10 @@ enum ClassificationSmokeRunner {
             let ids = ["good-1", "bad-perm", "good-2"]
             await queue.enqueue(ids)
 
-            var batchCount = 0
+            let batchCountBox = Box<Int>(0)
 
             await queue.processBatched { batch in
-                batchCount += 1
+                await batchCountBox.mutate { $0 += 1 }
                 var results: [String: ClassificationError?] = [:]
                 for id in batch {
                     if id == "bad-perm" {
@@ -109,6 +119,7 @@ enum ClassificationSmokeRunner {
                 return results
             }
 
+            let batchCount = await batchCountBox.value
             let snap = await queue.snapshot()
             check("Permanent: pending = 0", snap.pending == 0)
             check("Permanent: 1 failed (bad-perm)", snap.failed == 1)
@@ -126,13 +137,14 @@ enum ClassificationSmokeRunner {
 
             await queue.enqueue(["five-oh-oh"])
 
-            var attempts = 0
+            let attemptsBox = Box<Int>(0)
 
             await queue.processBatched { batch in
-                attempts += 1
+                await attemptsBox.mutate { $0 += 1 }
+                let currentAttempts = await attemptsBox.value
                 var results: [String: ClassificationError?] = [:]
                 for id in batch {
-                    if attempts <= 1 {
+                    if currentAttempts <= 1 {
                         results[id] = .serverError(statusCode: 503)
                     } else {
                         results[id] = nil
@@ -141,6 +153,7 @@ enum ClassificationSmokeRunner {
                 return results
             }
 
+            let attempts = await attemptsBox.value
             let snap = await queue.snapshot()
             check("5xx retry: очередь пуста", snap.isIdle)
             check("5xx retry: 2 попытки", attempts == 2)

@@ -10,11 +10,13 @@ import Secrets
 /// Полноценный `messages(in:page:)` со своим пулом соединений и авторизацией
 /// будет собран вместе с C4 (онбординг) — тогда провайдер начнёт сам
 /// открывать соединения по `Keychain`-секретам.
-public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProvider, @unchecked Sendable {
-    public let account: Account
-    public let store: any MetadataStore
-    public let secrets: (any SecretsStore)?
-    public let endpoint: IMAPEndpoint
+/// Actor-изоляция гарантирует атомарность `ensureSession()`: при конкурентных
+/// вызовах только один создаёт IMAPSession, остальные получают уже готовый.
+public actor LiveAccountDataProvider {
+    public nonisolated let account: Account
+    public nonisolated let store: any MetadataStore
+    public nonisolated let secrets: (any SecretsStore)?
+    public nonisolated let endpoint: IMAPEndpoint
 
     /// Long-lived IMAP-сессия. Создаётся лениво при первом обращении,
     /// переиспользуется для всех последующих операций.
@@ -162,10 +164,10 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
         }
     }
 
-    public func messages(in mailbox: Mailbox.ID, page: Page) -> AsyncThrowingStream<[Message], any Error> {
+    public nonisolated func messages(in mailbox: Mailbox.ID, page: Page) -> AsyncThrowingStream<[Message], any Error> {
         let store = self.store
         return AsyncThrowingStream { continuation in
-            let task = Task {
+            let task = Task { [self] in
                 do {
                     // Шаг 1: мгновенно отдаём то, что уже в store — чтобы UI
                     // сразу показал список (офлайн-first).
@@ -209,10 +211,10 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
         }
     }
 
-    public func body(for message: Message.ID) -> AsyncThrowingStream<ByteChunk, any Error> {
+    public nonisolated func body(for message: Message.ID) -> AsyncThrowingStream<ByteChunk, any Error> {
         let store = self.store
         return AsyncThrowingStream { continuation in
-            let task = Task {
+            let task = Task { [self] in
                 do {
                     guard let record = try await store.message(id: message) else {
                         throw MailError.messageNotFound(message)
@@ -239,6 +241,17 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
 
     public func threads(in mailbox: Mailbox.ID) async throws -> [MessageThread] {
         throw MailError.unsupported("threads — TODO фаза B")
+    }
+
+    public func attachmentBytes(for attachment: Attachment, messageID: Message.ID) async throws -> Data {
+        guard let record = try await store.message(id: messageID) else {
+            throw MailError.messageNotFound(messageID)
+        }
+        let sess = try await ensureSession()
+        _ = try await sess.select(record.mailboxID.rawValue)
+        let section = attachment.partNumber ?? ""
+        let bytes = try await sess.fetchBody(uid: record.uid, section: section)
+        return Data(bytes)
     }
 
     // MARK: - B6: синхронизация заголовков
@@ -396,6 +409,37 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
         try await setFlag(.flagged, on: messageID, enabled: flagged)
     }
 
+    /// Перемещает письмо в произвольную папку по `Mailbox.ID`.
+    /// Использует UID MOVE, fallback — COPY+STORE+EXPUNGE для серверов без MOVE.
+    /// После успеха снимает метаданные исходной папки из store.
+    public func moveToMailbox(messageID: Message.ID, targetMailboxID: Mailbox.ID) async throws {
+        guard let record = try await store.message(id: messageID) else {
+            throw MailError.messageNotFound(messageID)
+        }
+        let allMailboxes = try await mailboxes()
+        guard let destination = allMailboxes.first(where: { $0.id == targetMailboxID }) else {
+            throw MailError.mailboxNotFound(targetMailboxID)
+        }
+        let sess = try await ensureSession()
+        _ = try await sess.select(record.mailboxID.rawValue)
+        let caps = try await sess.capability()
+        let hasMove = caps.contains { $0.uppercased() == "MOVE" }
+        if hasMove {
+            try await sess.uidMove(uid: record.uid, to: destination.path)
+        } else {
+            try await sess.uidMoveFallback(uid: record.uid, to: destination.path)
+        }
+        try await store.delete(messageIDs: [messageID])
+    }
+
+    /// Восстанавливает письма из Trash в указанную папку (MailAi-9fi0).
+    /// Использует moveToMailbox для каждого письма.
+    public func restore(messageIDs: [Message.ID], to targetMailboxID: Mailbox.ID) async throws {
+        for messageID in messageIDs {
+            try await moveToMailbox(messageID: messageID, targetMailboxID: targetMailboxID)
+        }
+    }
+
     // MARK: - AI-7: серверная синхронизация Important/Unimportant
 
     /// Кэш состояния серверных папок: были ли они уже созданы/проверены в
@@ -504,3 +548,8 @@ public final class LiveAccountDataProvider: AccountDataProvider, MailActionsProv
         )
     }
 }
+
+// @preconcurrency подавляет #ConformanceIsolation: методы протоколов вызываются
+// с await (все async), actor-изоляция ensureSession() обеспечивает корректность.
+extension LiveAccountDataProvider: @preconcurrency AccountDataProvider {}
+extension LiveAccountDataProvider: @preconcurrency MailActionsProvider {}

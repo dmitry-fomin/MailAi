@@ -181,9 +181,9 @@ func runIntegration() async throws {
     let endpoint = IMAPEndpoint(host: "127.0.0.1", port: server.port, security: .plain)
 
     let provider = LiveAccountDataProvider(account: account, store: store)
-    var bodyBytes: [UInt8]? = []
-
-    try await IMAPConnection.withOpen(endpoint: endpoint, eventLoopGroup: group) { conn in
+    let bodyBytes: [UInt8]? = try await IMAPConnection.withOpen(
+        endpoint: endpoint, eventLoopGroup: group
+    ) { conn in
         try await conn.login(username: "bob", password: "secret")
         _ = try await conn.select("INBOX")
 
@@ -198,18 +198,17 @@ func runIntegration() async throws {
 
         // Стримим тело в память — инвариант «в памяти, не на диске».
         let body = try await conn.fetchBody(uid: 1)
-        bodyBytes = body
         let bodyString = String(bytes: body, encoding: .utf8) ?? ""
         check("MessageBody содержит SECRET_TOKEN в памяти",
               bodyString.contains(SECRET_TOKEN))
 
         try await conn.logout()
+        return body
     }
 
     // «Закрываем окно» — обнуляем ссылки. AccountSessionModel.closeSession
     // делает ровно это: openBody = nil, messages = [].
-    bodyBytes = nil
-    _ = bodyBytes  // чтобы компилятор не жаловался на unused
+    _ = bodyBytes
 
     // Закрываем pool и ждём, пока WAL зафиксируется.
     // GRDB checkpoint'ит WAL при закрытии pool. Здесь DBPool — внутри actor,

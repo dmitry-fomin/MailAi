@@ -11,6 +11,12 @@ public struct ClassificationResult: Sendable, Equatable {
     public let tokensIn: Int
     public let tokensOut: Int
     public let durationMs: Int
+    /// AI-категория письма (work, finance, social и т.д.). Заполняется ClassifyV1.
+    public let category: MessageCategory?
+    /// Язык письма в формате ISO 639-1 (например "en", "ru"). Заполняется ClassifyV1.
+    public let language: String?
+    /// Тон письма (positive, neutral, negative, urgent). Заполняется ClassifyV1.
+    public let tone: MessageTone?
 
     public init(
         importance: Importance,
@@ -19,7 +25,10 @@ public struct ClassificationResult: Sendable, Equatable {
         reasoning: String,
         tokensIn: Int,
         tokensOut: Int,
-        durationMs: Int
+        durationMs: Int,
+        category: MessageCategory? = nil,
+        language: String? = nil,
+        tone: MessageTone? = nil
     ) {
         self.importance = importance
         self.confidence = confidence
@@ -28,5 +37,8 @@ public struct ClassificationResult: Sendable, Equatable {
         self.tokensIn = tokensIn
         self.tokensOut = tokensOut
         self.durationMs = durationMs
+        self.category = category
+        self.language = language
+        self.tone = tone
     }
 }

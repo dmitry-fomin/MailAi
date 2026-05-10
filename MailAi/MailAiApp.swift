@@ -1,4 +1,5 @@
 import SwiftUI
+import AI
 import AppShell
 import Core
 import MockData
@@ -29,6 +30,9 @@ struct ComposeWindowValue: Hashable, Codable {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NotificationManager.shared.setupDelegate()
+        Task {
+            try? await PromptStore.shared.initializeDefaults()
+        }
     }
 }
 
@@ -199,34 +203,62 @@ private func requestNotificationPermissionIfNeeded(registry: AccountRegistry) {
     }
 }
 
-/// Обёртка окна онбординга: создаёт свежий `OnboardingViewModel` при
-/// каждом открытии и закрывает окно после успеха/отмены.
+/// Обёртка окна онбординга. Первый шаг — выбор типа аккаунта (IMAP / Exchange),
+/// затем — соответствующая форма. Все три шага живут в одном окне.
 private struct OnboardingWindow: View {
     @ObservedObject var registry: AccountRegistry
     let secretsStore: any SecretsStore
-    @StateObject private var model: OnboardingViewModel
     @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.openWindow) private var openWindow
+
+    private enum Step { case picker, imap, exchange }
+    @State private var step: Step = .picker
+
+    @StateObject private var imapModel: OnboardingViewModel
+    @StateObject private var exchangeModel: ExchangeOnboardingViewModel
 
     init(registry: AccountRegistry, secretsStore: any SecretsStore) {
         self.registry = registry
         self.secretsStore = secretsStore
-        _model = StateObject(wrappedValue: OnboardingViewModel(
+        _imapModel = StateObject(wrappedValue: OnboardingViewModel(
+            secretsStore: secretsStore,
+            registry: registry
+        ))
+        _exchangeModel = StateObject(wrappedValue: ExchangeOnboardingViewModel(
             secretsStore: secretsStore,
             registry: registry
         ))
     }
 
     var body: some View {
-        OnboardingScene(
-            model: model,
-            onCancel: { dismissWindow(id: "onboarding") },
-            onCompleted: { account in
-                dismissWindow(id: "onboarding")
-                requestNotificationPermissionIfNeeded(registry: registry)
-                openWindow(id: "account", value: account.id)
-            }
-        )
+        switch step {
+        case .picker:
+            AccountTypePickerScene(
+                onSelectIMAP: { step = .imap },
+                onSelectExchange: { step = .exchange },
+                onCancel: { dismissWindow(id: "onboarding") }
+            )
+        case .imap:
+            OnboardingScene(
+                model: imapModel,
+                onCancel: { step = .picker },
+                onCompleted: { account in
+                    dismissWindow(id: "onboarding")
+                    requestNotificationPermissionIfNeeded(registry: registry)
+                    openWindow(id: "account", value: account.id)
+                }
+            )
+        case .exchange:
+            ExchangeOnboardingScene(
+                model: exchangeModel,
+                onCancel: { step = .picker },
+                onCompleted: { account in
+                    dismissWindow(id: "onboarding")
+                    requestNotificationPermissionIfNeeded(registry: registry)
+                    openWindow(id: "account", value: account.id)
+                }
+            )
+        }
     }
 }
 

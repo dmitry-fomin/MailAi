@@ -18,6 +18,10 @@ let package = Package(
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
                 .enableUpcomingFeature("ExistentialAny")
+            ],
+            linkerSettings: [
+                .linkedFramework("QuickLookUI"),
+                .linkedFramework("CoreSpotlight")
             ]
         ),
         .testTarget(

@@ -18,13 +18,93 @@ public final class ComposeViewModel: ObservableObject {
     /// `@MainActor`-контекста, а внутрь оборачивает actor-вызов.
     public typealias DraftSaver = @Sendable (DraftEnvelope, String) async throws -> Void
 
-    // MARK: - Form state
+    // MARK: - Form state (tokens)
 
-    @Published public var to: String = ""
-    @Published public var cc: String = ""
-    @Published public var bcc: String = ""
+    /// Массивы токенов для полей адресатов.
+    /// AddressTokenField работает напрямую с этими массивами.
+    @Published public var toTokens: [String] = []
+    @Published public var ccTokens: [String] = []
+    @Published public var bccTokens: [String] = []
+
     @Published public var subject: String = ""
     @Published public var body: String = ""
+
+    // MARK: - Attachments
+
+    /// Прикреплённые файлы. Данные живут только в памяти до отправки / очистки.
+    @Published public private(set) var attachedFiles: [ComposeAttachment] = []
+
+    /// Суммарный размер всех вложений в байтах.
+    public var totalAttachmentSize: Int {
+        attachedFiles.reduce(0) { $0 + $1.size }
+    }
+
+    /// Предупреждение о большом размере вложений (>25 МБ).
+    public var attachmentSizeWarning: String? {
+        let limit = 25 * 1024 * 1024
+        guard totalAttachmentSize > limit else { return nil }
+        let mb = Double(totalAttachmentSize) / (1024 * 1024)
+        return String(format: "Суммарный размер вложений %.1f МБ превышает рекомендуемые 25 МБ. Письмо может не дойти.", mb)
+    }
+
+    /// Добавляет файл по URL. Читает данные в память; тело файла не пишется на диск.
+    public func attachFile(url: URL) {
+        guard url.isFileURL else { return }
+        guard (try? url.checkResourceIsReachable()) == true else { return }
+        // Избегаем дублей по пути
+        let path = url.path
+        guard !attachedFiles.contains(where: { $0.url.path == path }) else { return }
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return }
+        let att = ComposeAttachment(
+            url: url,
+            filename: url.lastPathComponent,
+            mimeType: mimeType(for: url),
+            data: data
+        )
+        attachedFiles.append(att)
+    }
+
+    /// Удаляет вложение по ID.
+    public func removeAttachment(id: ComposeAttachment.ID) {
+        attachedFiles.removeAll { $0.id == id }
+    }
+
+    /// MIME-тип по расширению файла (простая эвристика).
+    private func mimeType(for url: URL) -> String {
+        let table: [String: String] = [
+            "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "png": "image/png", "gif": "image/gif", "webp": "image/webp",
+            "pdf": "application/pdf",
+            "doc": "application/msword",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "xls": "application/vnd.ms-excel",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "ppt": "application/vnd.ms-powerpoint",
+            "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "zip": "application/zip", "txt": "text/plain",
+            "html": "text/html", "htm": "text/html",
+            "mp3": "audio/mpeg", "mp4": "video/mp4", "mov": "video/quicktime"
+        ]
+        return table[url.pathExtension.lowercased()] ?? "application/octet-stream"
+    }
+
+    // MARK: - Строковые алиасы (обратная совместимость)
+
+    /// Строковое представление поля «Кому» для MIME и DraftEnvelope.
+    public var to: String {
+        get { toTokens.joined(separator: ", ") }
+        set { toTokens = Self.split(newValue) }
+    }
+
+    public var cc: String {
+        get { ccTokens.joined(separator: ", ") }
+        set { ccTokens = Self.split(newValue) }
+    }
+
+    public var bcc: String {
+        get { bccTokens.joined(separator: ", ") }
+        set { bccTokens = Self.split(newValue) }
+    }
 
     // MARK: - UI state
 
@@ -55,16 +135,91 @@ public final class ComposeViewModel: ObservableObject {
     private let sendProvider: (any SendProvider)?
     private let draftSaver: DraftSaver?
 
+    // MARK: - MailAi-r862: Autosave
+
+    /// Задержка автосохранения черновика — 3 секунды после последнего изменения.
+    private static let autosaveDebounce: UInt64 = 3_000_000_000
+
+    /// Задача автосохранения. Отменяется при каждом новом изменении полей,
+    /// запускается заново — реализует debounce без DispatchQueue.
+    private var autosaveTask: Task<Void, Never>?
+
+    /// Флаг: были ли изменения с момента последнего сохранения черновика.
+    private var hasUnsavedChanges: Bool = false
+
     public init(
         accountEmail: String,
         accountDisplayName: String? = nil,
         sendProvider: (any SendProvider)? = nil,
-        draftSaver: DraftSaver? = nil
+        draftSaver: DraftSaver? = nil,
+        defaultSignatureBody: String? = nil
     ) {
         self.accountEmail = accountEmail
         self.accountDisplayName = accountDisplayName
         self.sendProvider = sendProvider
         self.draftSaver = draftSaver
+        if let sig = defaultSignatureBody, !sig.isEmpty {
+            self.body = "\n\n\(sig)"
+        }
+    }
+
+    /// Вызывается из view при любом изменении редактируемых полей.
+    /// Запускает debounced-автосохранение через 3 секунды бездействия.
+    ///
+    /// SwiftUI-view подписывается через `.onChange(of:)` на `body`, `subject`,
+    /// `toTokens`, `ccTokens`, `bccTokens` и вызывает этот метод.
+    public func notifyContentChanged() {
+        guard draftSaver != nil else { return }
+        hasUnsavedChanges = true
+        autosaveTask?.cancel()
+        autosaveTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: Self.autosaveDebounce)
+            } catch {
+                // Отменена — не сохраняем.
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.performAutosave()
+        }
+    }
+
+    /// Немедленно сохраняет черновик (например, при закрытии окна).
+    public func saveIfNeeded() async {
+        guard hasUnsavedChanges, draftSaver != nil else { return }
+        autosaveTask?.cancel()
+        await performAutosave()
+    }
+
+    /// Отменяет задачу автосохранения (при отправке, закрытии без сохранения).
+    public func cancelAutosave() {
+        autosaveTask?.cancel()
+        autosaveTask = nil
+    }
+
+    /// Выполняет фактическое автосохранение через `draftSaver`.
+    @MainActor
+    private func performAutosave() async {
+        guard hasUnsavedChanges else { return }
+        // Не показываем .saving/.saved в draftState при автосохранении,
+        // чтобы не мигать UI. Тихое сохранение.
+        guard let saver = draftSaver else { return }
+        guard isCcValid, isBccValid else { return }
+        let envelope = DraftEnvelope(
+            from: fromHeader,
+            to: toTokens,
+            cc: ccTokens,
+            bcc: bccTokens,
+            subject: subject
+        )
+        let snapshotBody = body
+        do {
+            try await saver(envelope, snapshotBody)
+            hasUnsavedChanges = false
+        } catch {
+            // Тихая ошибка автосохранения — не пишем в draftState,
+            // повторим через следующий notifyContentChanged.
+        }
     }
 
     // MARK: - Capabilities
@@ -76,15 +231,15 @@ public final class ComposeViewModel: ObservableObject {
 
     /// Поле «To» должно содержать минимум один валидный e-mail.
     public var isToValid: Bool {
-        !parsedTo.isEmpty && parsedTo.allSatisfy(Self.isValidEmail)
+        !toTokens.isEmpty && toTokens.allSatisfy(Self.isValidEmail)
     }
 
     public var isCcValid: Bool {
-        parsedCc.allSatisfy(Self.isValidEmail)
+        ccTokens.allSatisfy(Self.isValidEmail)
     }
 
     public var isBccValid: Bool {
-        parsedBcc.allSatisfy(Self.isValidEmail)
+        bccTokens.allSatisfy(Self.isValidEmail)
     }
 
     public var isFormValid: Bool {
@@ -95,14 +250,10 @@ public final class ComposeViewModel: ObservableObject {
     public var hasUnsavedContent: Bool {
         !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !to.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !toTokens.isEmpty
     }
 
     // MARK: - Parsing
-
-    private var parsedTo: [String] { Self.split(to) }
-    private var parsedCc: [String] { Self.split(cc) }
-    private var parsedBcc: [String] { Self.split(bcc) }
 
     /// Делит строку «addr1, addr2; addr3» на массив адресов, выкидывая
     /// пустые элементы. Логирование адресов запрещено — функция чистая.
@@ -157,16 +308,16 @@ public final class ComposeViewModel: ObservableObject {
         sendState = .sending
         let envelope = Envelope(
             from: accountEmail,
-            to: parsedTo,
-            cc: parsedCc,
-            bcc: parsedBcc
+            to: toTokens,
+            cc: ccTokens,
+            bcc: bccTokens
         )
         let mime = MIMEComposer.compose(
             from: fromHeader,
             recipients: MIMEComposer.Recipients(
-                to: parsedTo,
-                cc: parsedCc,
-                bcc: parsedBcc
+                to: toTokens,
+                cc: ccTokens,
+                bcc: bccTokens
             ),
             subject: subject,
             body: body
@@ -177,6 +328,8 @@ public final class ComposeViewModel: ObservableObject {
             // Гасим тело сразу после успешной отправки, чтобы не держать
             // его в памяти дольше необходимого.
             body = ""
+            cancelAutosave()
+            hasUnsavedChanges = false
             sendState = .sent
             didFinish = true
         } catch let err as MailError {
@@ -195,21 +348,22 @@ public final class ComposeViewModel: ObservableObject {
         // Для черновика разрешаем пустой список получателей — это нормально:
         // пользователь дописывает письмо. Минимально требуем валидность
         // непустых полей.
-        guard isCcValid, isBccValid, parsedTo.allSatisfy(Self.isValidEmail) else {
+        guard isCcValid, isBccValid, toTokens.allSatisfy(Self.isValidEmail) else {
             draftState = .error("Проверьте поля получателей")
             return
         }
         draftState = .saving
         let envelope = DraftEnvelope(
             from: fromHeader,
-            to: parsedTo,
-            cc: parsedCc,
-            bcc: parsedBcc,
+            to: toTokens,
+            cc: ccTokens,
+            bcc: bccTokens,
             subject: subject
         )
         let snapshotBody = body
         do {
             try await saver(envelope, snapshotBody)
+            hasUnsavedChanges = false
             draftState = .saved
         } catch let err as MailError {
             draftState = .error(Self.describe(err))
@@ -225,6 +379,143 @@ public final class ComposeViewModel: ObservableObject {
         if case .error = draftState { draftState = .idle }
         if case .sent = sendState { sendState = .idle }
         if case .saved = draftState { draftState = .idle }
+    }
+
+    // MARK: - Factory methods (Reply / ReplyAll / Forward)
+
+    /// Reply: заполняет поле To = from исходного письма, Subject = "Re: …",
+    /// тело — цитата исходного письма. Если передана подпись — добавляется перед цитатой.
+    public static func makeReply(
+        to original: Message,
+        accountEmail: String,
+        accountDisplayName: String?,
+        sendProvider: (any SendProvider)?,
+        draftSaver: DraftSaver?,
+        defaultSignatureBody: String? = nil
+    ) -> ComposeViewModel {
+        let vm = ComposeViewModel(
+            accountEmail: accountEmail,
+            accountDisplayName: accountDisplayName,
+            sendProvider: sendProvider,
+            draftSaver: draftSaver,
+            defaultSignatureBody: defaultSignatureBody
+        )
+        if let fromAddress = original.from?.address, !fromAddress.isEmpty {
+            vm.toTokens = [fromAddress]
+        }
+        vm.subject = Self.reSubject(original.subject)
+        vm.body += Self.quotedBody(original)
+        return vm
+    }
+
+    /// ReplyAll: To = from исходного, Cc = все to + cc оригинала минус себя.
+    public static func makeReplyAll(
+        to original: Message,
+        accountEmail: String,
+        accountDisplayName: String?,
+        sendProvider: (any SendProvider)?,
+        draftSaver: DraftSaver?,
+        defaultSignatureBody: String? = nil
+    ) -> ComposeViewModel {
+        let vm = ComposeViewModel(
+            accountEmail: accountEmail,
+            accountDisplayName: accountDisplayName,
+            sendProvider: sendProvider,
+            draftSaver: draftSaver,
+            defaultSignatureBody: defaultSignatureBody
+        )
+        if let fromAddress = original.from?.address, !fromAddress.isEmpty {
+            vm.toTokens = [fromAddress]
+        }
+        vm.ccTokens = (original.to + original.cc)
+            .map(\.address)
+            .filter { $0.lowercased() != accountEmail.lowercased() }
+        vm.subject = Self.reSubject(original.subject)
+        vm.body += Self.quotedBody(original)
+        return vm
+    }
+
+    /// Forward: To/Cc пусты, Subject = "Fwd: …", тело — цитата оригинала.
+    public static func makeForward(
+        of original: Message,
+        accountEmail: String,
+        accountDisplayName: String?,
+        sendProvider: (any SendProvider)?,
+        draftSaver: DraftSaver?,
+        defaultSignatureBody: String? = nil
+    ) -> ComposeViewModel {
+        let vm = ComposeViewModel(
+            accountEmail: accountEmail,
+            accountDisplayName: accountDisplayName,
+            sendProvider: sendProvider,
+            draftSaver: draftSaver,
+            defaultSignatureBody: defaultSignatureBody
+        )
+        vm.subject = Self.fwdSubject(original.subject)
+        vm.body += Self.quotedBody(original)
+        return vm
+    }
+
+    // MARK: - Instance reply/forward initializers
+
+    /// Применяет режим «Ответить» к текущему экземпляру ViewModel.
+    public func reply(to original: Message) {
+        if let fromAddress = original.from?.address, !fromAddress.isEmpty {
+            toTokens = [fromAddress]
+        }
+        ccTokens = []
+        bccTokens = []
+        subject = Self.reSubject(original.subject)
+        body += Self.quotedBody(original)
+    }
+
+    /// Применяет режим «Ответить всем» к текущему экземпляру ViewModel.
+    public func replyAll(to original: Message) {
+        if let fromAddress = original.from?.address, !fromAddress.isEmpty {
+            toTokens = [fromAddress]
+        }
+        ccTokens = (original.to + original.cc)
+            .map(\.address)
+            .filter { $0.lowercased() != accountEmail.lowercased() }
+        bccTokens = []
+        subject = Self.reSubject(original.subject)
+        body += Self.quotedBody(original)
+    }
+
+    /// Применяет режим «Переслать» к текущему экземпляру ViewModel.
+    public func forward(message original: Message) {
+        toTokens = []
+        ccTokens = []
+        bccTokens = []
+        subject = Self.fwdSubject(original.subject)
+        body += Self.quotedBody(original)
+    }
+
+    // MARK: - Quote helpers
+
+    private static func reSubject(_ subject: String) -> String {
+        subject.hasPrefix("Re:") ? subject : "Re: \(subject)"
+    }
+
+    private static func fwdSubject(_ subject: String) -> String {
+        subject.hasPrefix("Fwd:") ? subject : "Fwd: \(subject)"
+    }
+
+    private static func quotedBody(_ message: Message) -> String {
+        let dateStr = Self.quoteDate(message.date)
+        let fromStr = message.from?.address ?? ""
+        var quote = "\n\n— Пересланное сообщение —\nОт: \(fromStr)\nДата: \(dateStr)\nТема: \(message.subject)"
+        if let preview = message.preview, !preview.isEmpty {
+            quote += "\n\n\(preview)"
+        }
+        return quote
+    }
+
+    private static func quoteDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.dateFormat = "d MMM yyyy"
+        return formatter.string(from: date)
     }
 
     // MARK: - Helpers

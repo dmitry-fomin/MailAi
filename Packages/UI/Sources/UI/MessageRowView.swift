@@ -7,13 +7,40 @@ import Core
 ///
 /// На 10k+ писем SwiftUI-`List` держит плавный скролл; если появится просадка,
 /// план из docs/UI.md — заменить на `NSTableView` через `NSViewRepresentable`.
+///
+/// AI-превью (MailAi-mon): если `aiSnippet` задан — показывается вместо preview.
+/// Если `aiSnippetLoading` == true — показывается placeholder «...».
 public struct MessageRowView: View {
     public let message: Message
     public let now: Date
+    /// Список папок, отображаемых в контекстном меню «Переместить в…».
+    /// Пустой массив по умолчанию — меню не показывается.
+    public var moveTargets: [Mailbox]
+    /// Callback, вызываемый при выборе целевой папки в контекстном меню.
+    public var onMove: ((Mailbox.ID) -> Void)?
+    /// MailAi-tq1r: true — показывать VIP-звёздочку рядом с именем отправителя.
+    public var isVIP: Bool
+    /// AI-сниппет (MailAi-mon). nil — показывается стандартный message.preview.
+    public var aiSnippet: String?
+    /// true — идёт асинхронная генерация AI-сниппета, показываем placeholder «...».
+    public var aiSnippetLoading: Bool
 
-    public init(message: Message, now: Date = Date()) {
+    public init(
+        message: Message,
+        now: Date = Date(),
+        moveTargets: [Mailbox] = [],
+        onMove: ((Mailbox.ID) -> Void)? = nil,
+        isVIP: Bool = false,
+        aiSnippet: String? = nil,
+        aiSnippetLoading: Bool = false
+    ) {
         self.message = message
         self.now = now
+        self.moveTargets = moveTargets
+        self.onMove = onMove
+        self.isVIP = isVIP
+        self.aiSnippet = aiSnippet
+        self.aiSnippetLoading = aiSnippetLoading
     }
 
     public var body: some View {
@@ -26,6 +53,13 @@ public struct MessageRowView: View {
                     Text(senderLabel)
                         .font(.subheadline.weight(isUnread ? .bold : .semibold))
                         .lineLimit(1)
+                    // MailAi-tq1r: VIP star badge
+                    if isVIP {
+                        Image(systemName: "star.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.yellow)
+                            .accessibilityLabel("VIP отправитель")
+                    }
                     Spacer()
                     Text(MessageDateFormatter.short(message.date, now: now))
                         .font(.caption)
@@ -52,18 +86,57 @@ public struct MessageRowView: View {
                     }
                 }
 
-                if let preview = message.preview, !preview.isEmpty {
-                    Text(preview)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                previewLine
             }
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
+        // MailAi-eyb1: VoiceOver hint и traits
+        .accessibilityHint("Нажмите для открытия письма")
+        .accessibilityAddTraits(.isButton)
+        .contextMenu {
+            if !moveTargets.isEmpty {
+                Menu("Переместить в…") {
+                    ForEach(moveTargets) { mailbox in
+                        Button(mailbox.name) { onMove?(mailbox.id) }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Preview Line
+
+    /// Строка превью: AI-сниппет (если есть) > loading placeholder > стандартный preview.
+    @ViewBuilder private var previewLine: some View {
+        if aiSnippetLoading {
+            Text("...")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .italic()
+                .lineLimit(1)
+                .accessibilityLabel("AI-превью загружается")
+        } else if let snippet = aiSnippet, !snippet.isEmpty {
+            HStack(spacing: 3) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+                Text(snippet)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .italic()
+                    .lineLimit(1)
+            }
+            .accessibilityLabel("AI-превью: \(snippet)")
+        } else if let preview = message.preview, !preview.isEmpty {
+            Text(preview)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
     }
 
     // MARK: - Derived
@@ -94,6 +167,7 @@ public struct MessageRowView: View {
     private var accessibilityLabel: String {
         var parts: [String] = []
         if isUnread { parts.append("Непрочитано") }
+        if isVIP { parts.append("VIP") }
         parts.append("От \(senderLabel)")
         parts.append("Тема \(message.subject)")
         if hasAttachment { parts.append("есть вложение") }

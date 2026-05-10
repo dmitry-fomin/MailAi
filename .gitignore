@@ -33,3 +33,7 @@ xcuserdata/
 # A10: сгенерированные скриншот-артефакты (CI публикует отдельно).
 Scripts/artifacts/
 .claude/worktrees/
+
+# Source images / brainstorm outputs (not part of build)
+/icons/
+.superpowers/

@@ -18,7 +18,6 @@ public actor RetentionGC {
     public func run(now: Date = Date()) async throws -> Int {
         let cutoff = Calendar.current.date(byAdding: .month, value: -retentionMonths, to: now) ?? now
         let deleted = try await pool.write { db -> Int in
-            let before = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM message") ?? 0
             try db.execute(sql: """
                 DELETE FROM message
                 WHERE date < ?
@@ -30,8 +29,9 @@ public actor RetentionGC {
                 """,
                 arguments: [cutoff, cutoff]
             )
-            let after = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM message") ?? 0
-            return before - after
+            // db.changesCount возвращает число строк затронутых последним DML —
+            // дешевле двух SELECT COUNT(*).
+            return db.changesCount
         }
         return deleted
     }

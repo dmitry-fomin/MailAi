@@ -50,6 +50,14 @@ public struct Message: Sendable, Hashable, Identifiable, Codable {
     public let size: Int
     public let flags: MessageFlags
     public let importance: Importance
+    /// Значение заголовка List-Unsubscribe (метаданные, не тело письма).
+    /// Формат: `<https://...>, <mailto:...>` — стандарт RFC 2369 / RFC 8058.
+    /// nil, если заголовок отсутствует.
+    public let listUnsubscribe: String?
+    /// Значение заголовка List-Unsubscribe-Post (RFC 8058).
+    /// Обычно содержит `List-Unsubscribe=One-Click` — признак поддержки POST-отписки.
+    /// nil, если заголовок отсутствует или транспорт его не предоставляет.
+    public let listUnsubscribePost: String?
 
     public init(
         id: ID,
@@ -66,7 +74,9 @@ public struct Message: Sendable, Hashable, Identifiable, Codable {
         preview: String?,
         size: Int,
         flags: MessageFlags,
-        importance: Importance
+        importance: Importance,
+        listUnsubscribe: String? = nil,
+        listUnsubscribePost: String? = nil
     ) {
         self.id = id
         self.accountID = accountID
@@ -83,5 +93,7 @@ public struct Message: Sendable, Hashable, Identifiable, Codable {
         self.size = size
         self.flags = flags
         self.importance = importance
+        self.listUnsubscribe = listUnsubscribe
+        self.listUnsubscribePost = listUnsubscribePost
     }
 }

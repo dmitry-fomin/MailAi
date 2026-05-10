@@ -85,21 +85,22 @@ public struct MockSidebarProvider: SidebarProvider {
             ]
         )
 
-        let onMac = SidebarSection(
-            id: .onMyMac,
-            title: "На моём Mac",
-            items: [
-                SidebarItem(
-                    id: .init("local-archive"),
-                    title: "Локальный архив",
-                    systemImage: "internaldrive",
-                    unreadCount: 0,
-                    kind: .localFolder(name: "Локальный архив")
-                )
-            ]
-        )
+        // Специальные системные роли — идут первыми в секции аккаунта.
+        let specialRoles: [Mailbox.Role] = [.inbox, .sent, .drafts, .trash, .spam]
 
-        let mailboxItems = mailboxes.map { mailbox in
+        // Сортируем специальные папки по порядку из specialRoles, затем кастомные.
+        let sortedMailboxes = mailboxes.sorted { lhs, rhs in
+            let lhsIdx = specialRoles.firstIndex(of: lhs.role)
+            let rhsIdx = specialRoles.firstIndex(of: rhs.role)
+            switch (lhsIdx, rhsIdx) {
+            case (.some(let a), .some(let b)): return a < b
+            case (.some, .none): return true  // специальные выше кастомных
+            case (.none, .some): return false
+            case (.none, .none): return lhs.name.localizedCompare(rhs.name) == .orderedAscending
+            }
+        }
+
+        func makeItem(for mailbox: Mailbox) -> SidebarItem {
             SidebarItem(
                 id: .init("mailbox-\(mailbox.id.rawValue)"),
                 title: mailbox.name,
@@ -108,12 +109,48 @@ public struct MockSidebarProvider: SidebarProvider {
                 kind: .mailbox(mailbox.id, role: mailbox.role)
             )
         }
+
+        // Специальные папки → секция аккаунта.
+        let specialItems = sortedMailboxes
+            .filter { specialRoles.contains($0.role) }
+            .map { makeItem(for: $0) }
+
+        // Кастомные/прочие → плоский список дочерних элементов (рекурсивно).
+        let otherMailboxes = sortedMailboxes
+            .filter { !specialRoles.contains($0.role) }
+
+        var otherItems: [SidebarItem] = []
+        for mailbox in otherMailboxes {
+            otherItems.append(makeItem(for: mailbox))
+            // Первый уровень дочерних папок (иерархия IMAP).
+            for child in mailbox.children {
+                otherItems.append(SidebarItem(
+                    id: .init("mailbox-\(child.id.rawValue)"),
+                    title: "  \(child.name)", // отступ для визуальной вложенности
+                    systemImage: SidebarIcon.name(for: child.role),
+                    unreadCount: child.unreadCount,
+                    kind: .mailbox(child.id, role: child.role)
+                ))
+            }
+        }
+
         let accountSection = SidebarSection(
             id: .account,
             title: account.email,
-            items: mailboxItems
+            items: specialItems
         )
 
-        return [favorites, filtered, smart, onMac, accountSection]
+        // Если есть обычные папки — добавляем отдельную секцию «Папки».
+        var sections: [SidebarSection] = [favorites, filtered, smart, accountSection]
+        if !otherItems.isEmpty {
+            let foldersSection = SidebarSection(
+                id: .onMyMac,
+                title: "Папки",
+                items: otherItems
+            )
+            sections.append(foldersSection)
+        }
+
+        return sections
     }
 }

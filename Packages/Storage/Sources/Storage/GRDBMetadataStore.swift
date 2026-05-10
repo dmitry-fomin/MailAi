@@ -52,12 +52,15 @@ public actor GRDBMetadataStore: MetadataStore {
     public func delete(messageIDs: [Message.ID]) async throws {
         guard !messageIDs.isEmpty else { return }
         try await pool.write { db in
-            let placeholders = messageIDs.map { _ in "?" }.joined(separator: ", ")
-            let args = StatementArguments(messageIDs.map { $0.rawValue })
-            try db.execute(
-                sql: "DELETE FROM message WHERE id IN (\(placeholders))",
-                arguments: args
-            )
+            // SQLite ограничивает число параметров до 999; разбиваем на чанки по 500.
+            for chunk in messageIDs.chunked(size: 500) {
+                let placeholders = chunk.map { _ in "?" }.joined(separator: ", ")
+                let args = StatementArguments(chunk.map { $0.rawValue })
+                try db.execute(
+                    sql: "DELETE FROM message WHERE id IN (\(placeholders))",
+                    arguments: args
+                )
+            }
         }
     }
 
@@ -155,10 +158,18 @@ public actor GRDBMetadataStore: MetadataStore {
         }
     }
 
-    /// Проверка инварианта: ни в одной таблице/колонке не сохранено тело.
+    /// Проверка инварианта: ни в одной таблице/колонке не сохранено тело письма.
     /// Используется тестом `privacyInvariants`.
+    ///
+    /// Таблица `signature` намеренно исключена: её колонка `body` содержит
+    /// текст *подписи* пользователя (пользовательские настройки), а не тело письма —
+    /// это допустимо по инварианту CLAUDE.md.
     public func hasAnyBodyColumn() async throws -> Bool {
-        try await pool.read { db in
+        // Таблицы-исключения: их `body`-колонки — пользовательские настройки,
+        // не тела писем.
+        let excludedTables: Set<String> = ["signature"]
+
+        return try await pool.read { db in
             let columns = try Row.fetchAll(db, sql: """
                 SELECT m.name AS table_name, p.name AS column_name
                 FROM sqlite_master m
@@ -167,7 +178,10 @@ public actor GRDBMetadataStore: MetadataStore {
                 """
             )
             for row in columns {
+                let tableName = (row["table_name"] as String?) ?? ""
+                guard !excludedTables.contains(tableName.lowercased()) else { continue }
                 let col = (row["column_name"] as String?) ?? ""
+                // ai_snippet — разрешённый AI-сниппет (≤150 символов), не тело письма.
                 if ["body", "html", "text_body", "attachments_data"].contains(col.lowercased()) {
                     return true
                 }
@@ -179,6 +193,8 @@ public actor GRDBMetadataStore: MetadataStore {
     // MARK: - Private encode/decode
 
     private static func upsertMessage(_ msg: Message, into db: Database) throws {
+        // Принудительно усекаем preview до 500 символов — инвариант "тела не на диск".
+        let safePreview = msg.preview.map { String($0.prefix(500)) }
         let toJSON = try Self.encodeAddresses(msg.to)
         let ccJSON = try Self.encodeAddresses(msg.cc)
         try db.execute(sql: """
@@ -208,7 +224,7 @@ public actor GRDBMetadataStore: MetadataStore {
                 Int(msg.uid), msg.messageID, msg.threadID?.rawValue,
                 msg.subject, msg.from?.address, msg.from?.name,
                 toJSON, ccJSON,
-                msg.date, msg.preview, msg.size,
+                msg.date, safePreview, msg.size,
                 Int(msg.flags.rawValue),
                 msg.importance.rawValue
             ]
@@ -290,7 +306,7 @@ public actor GRDBMetadataStore: MetadataStore {
 
     private static func decodeAddresses(_ json: String) throws -> [MailAddress] {
         guard let data = json.data(using: .utf8), !data.isEmpty else { return [] }
-        return (try? JSONDecoder().decode([MailAddress].self, from: data)) ?? []
+        return try JSONDecoder().decode([MailAddress].self, from: data)
     }
 }
 

@@ -67,10 +67,10 @@ public actor ClassificationLog {
     public func runRetentionGC(olderThanDays days: Int = 90, now: Date = Date()) async throws -> Int {
         let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: now) ?? now
         return try await pool.write { db in
-            let before = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM classification_log") ?? 0
             try db.execute(sql: "DELETE FROM classification_log WHERE created_at < ?", arguments: [cutoff])
-            let after = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM classification_log") ?? 0
-            return before - after
+            // db.changesCount возвращает число строк затронутых последним DML —
+            // дешевле двух SELECT COUNT(*).
+            return db.changesCount
         }
     }
 

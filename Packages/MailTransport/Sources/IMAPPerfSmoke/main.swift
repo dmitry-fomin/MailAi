@@ -126,15 +126,13 @@ func runPerf() async throws {
     FileHandle.standardError.write(Data("▶ UID FETCH 1:\(messageCount) через локальный fake-сервер на 127.0.0.1:\(port)\n".utf8))
 
     let start = DispatchTime.now()
-    var fetchedCount = 0
-    var parseErrorsCount = 0
-
-    try await IMAPConnection.withOpen(endpoint: endpoint, eventLoopGroup: group) { conn in
+    let (fetchedCount, parseErrorsCount): (Int, Int) = try await IMAPConnection.withOpen(
+        endpoint: endpoint, eventLoopGroup: group
+    ) { conn in
         let range = IMAPUIDRange(lower: 1, upper: UInt32(messageCount))
         let (fetches, parseErrors) = try await conn.uidFetchHeaders(range: range)
-        fetchedCount = fetches.count
-        parseErrorsCount = parseErrors
         try await conn.logout()
+        return (fetches.count, parseErrors)
     }
 
     let elapsedNanos = DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds

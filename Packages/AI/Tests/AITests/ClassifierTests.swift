@@ -14,7 +14,8 @@ struct StubAIProvider: AIProvider {
     func complete(
         system: String,
         user: String,
-        streaming: Bool
+        streaming: Bool,
+        maxTokens: Int = 200
     ) -> AsyncThrowingStream<String, any Error> {
         let copy = payloads
         return AsyncThrowingStream { continuation in

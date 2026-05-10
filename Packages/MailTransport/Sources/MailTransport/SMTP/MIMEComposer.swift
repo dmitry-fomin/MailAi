@@ -149,18 +149,39 @@ public struct MIMEComposer: Sendable {
 
             // ── Мягкий перенос при необходимости ─────────────
             // Резервируем 1 символ для `=` soft-break маркера, чтобы строка
-            // вместе с `=` не превысила maxLen.
+            // вместе с `=` не превысила maxLen (RFC 2045: максимум 76 символов).
             if lineLen + token.count > maxLen - 1 {
-                // Перед мягким переносом: пробел/таб в конце строки → закодировать
+                // Перед мягким переносом: пробел/таб в конце строки → закодировать.
+                // При этом после замены (=20/=09 = 3 символа) длина может достигнуть
+                // maxLen-1+2=77 — нужно сначала проверить и при необходимости
+                // вставить soft-break ДО кодирования пробела.
                 if out.hasSuffix(String(UnicodeScalar(UInt8(ascii: " ")))) {
-                    out = String(out.dropLast()) + "=20"
-                    lineLen += 2
+                    // Заменяем пробел на =20 (3 символа вместо 1): lineLen увеличится на 2.
+                    // Если это превысит maxLen-1 — вставляем soft-break перед заменой.
+                    if lineLen - 1 + 3 > maxLen - 1 {
+                        // Строка была бы слишком длинной — сначала soft-break, потом =20
+                        out = String(out.dropLast()) + "=\r\n=20"
+                        lineLen = 3  // "=20"
+                    } else {
+                        out = String(out.dropLast()) + "=20"
+                        lineLen += 2
+                        out += "=\r\n"
+                        lineLen = 0
+                    }
                 } else if out.hasSuffix(String(UnicodeScalar(UInt8(ascii: "\t")))) {
-                    out = String(out.dropLast()) + "=09"
-                    lineLen += 2
+                    if lineLen - 1 + 3 > maxLen - 1 {
+                        out = String(out.dropLast()) + "=\r\n=09"
+                        lineLen = 3  // "=09"
+                    } else {
+                        out = String(out.dropLast()) + "=09"
+                        lineLen += 2
+                        out += "=\r\n"
+                        lineLen = 0
+                    }
+                } else {
+                    out += "=\r\n"
+                    lineLen = 0
                 }
-                out += "=\r\n"
-                lineLen = 0
             }
 
             out += token

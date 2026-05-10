@@ -247,6 +247,7 @@ public actor ClassificationCoordinator {
         case .rateLimited: return "429"
         case .serverError(let s): return "5xx_\(s)"
         case .httpError(let s): return "http_\(s)"
+        case .apiError: return "api_error"
         }
     }
 }

@@ -1,16 +1,58 @@
 import UserNotifications
 import Foundation
 
+// MARK: - Notification Action Identifiers
+
+public enum MailNotificationAction {
+    /// Идентификатор action «Отметить прочитанным».
+    public static let markAsRead = "MAIL_MARK_AS_READ"
+    /// Идентификатор category для уведомлений о письмах.
+    public static let categoryID = "NEW_MAIL"
+}
+
 // MARK: - Notification Delegate
 
-/// Делегат для отображения уведомлений, пока приложение в foreground.
-/// Без него macOS глушит баннеры, если окно активно.
-final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate, Sendable {
+/// Делегат для отображения уведомлений, пока приложение в foreground,
+/// и обработки action «Отметить прочитанным».
+///
+/// Регистрирует callback `onMarkAsRead`, который вызывается с `messageID`
+/// когда пользователь тапает action в баннере. Привязка происходит в
+/// `NotificationManager.setupDelegate(onMarkAsRead:)`.
+final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
+
+    var onMarkAsRead: ((String) -> Void)?
+    /// Вызывается при тапе на уведомление (action .defaultAction или кастомный tapped-баннер).
+    var onOpenMessage: ((String) -> Void)?
+
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         [.banner, .sound]
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        let userInfo = response.notification.request.content.userInfo
+        let messageID = userInfo["messageID"] as? String
+
+        switch response.actionIdentifier {
+        case MailNotificationAction.markAsRead:
+            if let messageID {
+                onMarkAsRead?(messageID)
+            }
+
+        case UNNotificationDefaultActionIdentifier:
+            // Пользователь тапнул по баннеру — открыть письмо.
+            if let messageID {
+                onOpenMessage?(messageID)
+            }
+
+        default:
+            break
+        }
     }
 }
 
@@ -23,6 +65,11 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate, Se
 ///   только generic-текст «Новое письмо в \<аккаунт\>».
 /// - Если письмо помечено как важное — показываем subject + sender.
 /// - Тело/сниппет письма **никогда** не попадают в уведомление.
+///
+/// **Action «Отметить прочитанным»:**
+/// - Каждое уведомление содержит action `MailNotificationAction.markAsRead`.
+/// - При нажатии вызывается callback, переданный в `setupDelegate(onMarkAsRead:)`.
+/// - `messageID` передаётся через `userInfo["messageID"]`.
 ///
 /// Используется как singleton: `NotificationManager.shared`.
 public final class NotificationManager: @unchecked Sendable {
@@ -39,10 +86,38 @@ public final class NotificationManager: @unchecked Sendable {
 
     private init() {}
 
-    /// Устанавливает делегат `UNUserNotificationCenter`.
+    /// Устанавливает делегат `UNUserNotificationCenter` и регистрирует
+    /// notification category с action «Отметить прочитанным».
+    ///
     /// Вызвать один раз при запуске приложения (из `AppDelegate` или `.task`).
-    public func setupDelegate() {
-        UNUserNotificationCenter.current().delegate = notificationDelegate
+    ///
+    /// - Parameters:
+    ///   - onMarkAsRead: Вызывается с `messageID`, когда пользователь нажимает
+    ///     action «Отметить прочитанным» в баннере уведомления.
+    ///   - onOpenMessage: Вызывается с `messageID`, когда пользователь тапает
+    ///     по баннеру (тап без выбора action — открыть письмо).
+    public func setupDelegate(
+        onMarkAsRead: ((String) -> Void)? = nil,
+        onOpenMessage: ((String) -> Void)? = nil
+    ) {
+        notificationDelegate.onMarkAsRead = onMarkAsRead
+        notificationDelegate.onOpenMessage = onOpenMessage
+        let center = UNUserNotificationCenter.current()
+        center.delegate = notificationDelegate
+
+        // Регистрируем category с action «Отметить прочитанным».
+        let markReadAction = UNNotificationAction(
+            identifier: MailNotificationAction.markAsRead,
+            title: "Отметить прочитанным",
+            options: []
+        )
+        let category = UNNotificationCategory(
+            identifier: MailNotificationAction.categoryID,
+            actions: [markReadAction],
+            intentIdentifiers: [],
+            options: []
+        )
+        center.setNotificationCategories([category])
     }
 
     /// Запрашивает у пользователя разрешение на показ уведомлений.
@@ -69,12 +144,15 @@ public final class NotificationManager: @unchecked Sendable {
     ///   - accountName: Отображаемое имя аккаунта (email или displayName).
     ///   - accountID: Уникальный идентификатор аккаунта. Используется для
     ///     группировки уведомлений (threadIdentifier) и их удаления.
+    ///   - messageID: Идентификатор письма. Передаётся через `userInfo` для
+    ///     последующей обработки action «Отметить прочитанным».
     ///   - subject: Тема письма (показывается только если `isImportant == true`).
     ///   - sender: Имя/адрес отправителя (показывается только если `isImportant == true`).
     ///   - isImportant: Признак того, что AI-pack одобрил письмо как важное.
     public func notify(
         accountName: String,
         accountID: String,
+        messageID: String? = nil,
         subject: String? = nil,
         sender: String? = nil,
         isImportant: Bool = false
@@ -94,6 +172,12 @@ public final class NotificationManager: @unchecked Sendable {
         content.sound = .default
         // Группировка уведомлений по аккаунту в Notification Center.
         content.threadIdentifier = accountID
+        // Category с action «Отметить прочитанным».
+        content.categoryIdentifier = MailNotificationAction.categoryID
+        // messageID передаём в userInfo для обработки action.
+        if let messageID {
+            content.userInfo = ["messageID": messageID]
+        }
 
         let notificationID = UUID().uuidString
         let request = UNNotificationRequest(
